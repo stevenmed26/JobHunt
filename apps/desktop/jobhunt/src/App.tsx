@@ -37,11 +37,15 @@ export default function App() {
     try {
       setErr("");
       const data = await getJobs();
-      setJobs(data);
+
+      // HARD GUARANTEE jobs is always an array
+      setJobs(Array.isArray(data) ? data : []);
     } catch (e: any) {
       setErr(String(e?.message ?? e));
+      setJobs([]); // also ensure array on error
     }
   }
+
 
   useEffect(() => {
     if (isTauri()) {
@@ -75,6 +79,7 @@ export default function App() {
       )}
 
       <div style={{ marginTop: 16 }}>
+        {jobs.length === 0 && <div>No jobs yet.</div>}
         {jobs.map((j) => (
           <div
             key={j.id}

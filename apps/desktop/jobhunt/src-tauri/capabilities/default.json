@@ -1,14 +1,16 @@
 {
+  "identifier": "default",
+  "description": "Default capabilities",
+  "local": true,
+  "windows": ["main"],
   "permissions": [
     "core:default",
     {
       "identifier": "shell:allow-spawn",
       "allow": [
-        {
-          "name": "bin/engine",
-          "sidecar": true
-        }
+        { "name": "bin/engine", "sidecar": true }
       ]
     }
   ]
 }
+
