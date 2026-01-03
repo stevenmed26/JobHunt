@@ -1,0 +1,14 @@
+{
+  "permissions": [
+    "core:default",
+    {
+      "identifier": "shell:allow-spawn",
+      "allow": [
+        {
+          "name": "bin/engine",
+          "sidecar": true
+        }
+      ]
+    }
+  ]
+}
