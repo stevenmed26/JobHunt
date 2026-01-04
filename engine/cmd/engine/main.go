@@ -89,7 +89,7 @@ func main() {
 	loadCfg := func() (config.Config, error) {
 		return config.Load(userCfgPath)
 	}
-	cfg, err := loadCfg()
+	cfg, err := loadCfg().(config.Config)
 	if err != nil {
 		log.Fatalf("config load failed (%s): %v", userCfgPath, err)
 	}

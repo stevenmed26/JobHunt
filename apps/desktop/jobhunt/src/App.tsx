@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { events, getJobs, seedJob } from "./api";
 import { Command } from "@tauri-apps/plugin-shell";
 
+const [view, setView] = useState<"jobs" | "prefs">("jobs");
+
 async function startEngine() {
   try {
     const cmd = Command.sidecar("bin/engine");
@@ -66,6 +68,9 @@ export default function App() {
         <button onClick={() => refresh()}>Refresh</button>
         <button onClick={() => seedJob().then(refresh).catch((e) => setErr(String(e)))}>
           Seed fake job
+        </button>
+        <button onClick={() => setView(view === "jobs" ? "prefs" : "jobs")}>
+          {view === "jobs" ? "Preferences" : "Back to Jobs"}
         </button>
       </div>
 
