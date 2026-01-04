@@ -69,7 +69,6 @@ func (h *eventHub) publish(evt string) {
 }
 
 func main() {
-	// Engine data dir: use env if provided (Tauri can pass one), else local folder.
 	dataDir := os.Getenv("JOBHUNT_DATA_DIR")
 	if dataDir == "" {
 		dataDir = "."
@@ -89,11 +88,16 @@ func main() {
 	loadCfg := func() (config.Config, error) {
 		return config.Load(userCfgPath)
 	}
-	cfg, err := loadCfg().(config.Config)
+	cfg, err := loadCfg()
 	if err != nil {
 		log.Fatalf("config load failed (%s): %v", userCfgPath, err)
 	}
 	cfgVal.Store(cfg)
+
+	// scorer := func(job domain.JobLead) (int, []string) {
+	// 	c := cfgVal.Load().(config.Config)
+	// 	return rank.YAMLScorer{Cfg: c}.Score(job)
+	// }
 
 	dbPath := filepath.Join(dataDir, "jobhunt.db")
 	db, err := sql.Open("sqlite", dbPath)
@@ -119,6 +123,41 @@ func main() {
 			return
 		}
 		writeJSON(w, jobs)
+	})
+	mux.HandleFunc("/config", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			cur := cfgVal.Load().(config.Config)
+			writeJSON(w, cur)
+			return
+		case http.MethodPut:
+			var incoming config.Config
+			dec := json.NewDecoder(r.Body)
+			dec.DisallowUnknownFields()
+			if err := dec.Decode(&incoming); err != nil {
+				http.Error(w, "invalid JSON: "+err.Error(), 400)
+				return
+			}
+
+			if err := config.SaveAtomic(userCfgPath, incoming); err != nil {
+				http.Error(w, err.Error(), 400)
+				return
+			}
+
+			// Reload from disk
+			saved, err := loadCfg()
+			if err != nil {
+				http.Error(w, "saved but reload failed: "+err.Error(), 500)
+				return
+			}
+			cfgVal.Store(saved)
+			writeJSON(w, saved)
+			return
+
+		default:
+			http.Error(w, "GET or PUT only", 405)
+			return
+		}
 	})
 	mux.HandleFunc("/seed", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {

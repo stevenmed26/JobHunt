@@ -1,3 +1,5 @@
+import { normalizeConfig } from "./configNormalize";
+
 export const ENGINE_BASE = "http://127.0.0.1:38471";
 
 export async function getJobs() {
@@ -24,26 +26,52 @@ export function events(onMessage: (data: any) => void) {
   return () => es.close();
 }
 
-export type WeightedTerm = { term: string; weight: number };
-
-export type AppConfig = {
-  titles: string[];
-  keywords: WeightedTerm[];
-  penalties: WeightedTerm[];
+export type Rule = {
+  tag: string;
+  weight: number;
+  any: string[];
 };
 
-export async function getConfig(): Promise<AppConfig> {
+export type Penalty = {
+  reason: string;
+  weight: number;
+  any: string[];
+};
+
+export type EngineConfig = {
+  app: { port: number; data_dir: string };
+  polling: {
+    email_seconds: number;
+    fast_lane_seconds: number;
+    normal_lane_seconds: number;
+  };
+  filters: {
+    remote_ok: boolean;
+    locations_allow: string[];
+    locations_block: string[];
+  };
+  scoring: {
+    notify_min_score: number;
+    title_rules: Rule[];
+    keyword_rules: Rule[];
+    penalties: Penalty[];
+  };
+};
+
+export async function getConfig(): Promise<EngineConfig> {
   const res = await fetch(`${ENGINE_BASE}/config`);
   if (!res.ok) throw new Error(await res.text());
-  return res.json();
+  const raw = await res.json();
+  return normalizeConfig(raw)
 }
 
-export async function putConfig(cfg: AppConfig): Promise<AppConfig> {
+export async function putConfig(cfg: EngineConfig): Promise<EngineConfig> {
   const res = await fetch(`${ENGINE_BASE}/config`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(cfg),
   });
   if (!res.ok) throw new Error(await res.text());
-  return res.json();
+  const raw = await res.json();
+  return normalizeConfig(raw);
 }

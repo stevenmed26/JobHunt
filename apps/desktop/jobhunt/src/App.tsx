@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { events, getJobs, seedJob } from "./api";
 import { Command } from "@tauri-apps/plugin-shell";
+import Preferences from "./Preferences";
 
-const [view, setView] = useState<"jobs" | "prefs">("jobs");
 
 async function startEngine() {
   try {
@@ -12,6 +12,14 @@ async function startEngine() {
   } catch (e) {
     console.error("Failed to start engine", e);
   }
+}
+
+let engineStarted = false;
+
+async function startEngineOnce() {
+  if (engineStarted) return;
+  engineStarted = true;
+  await startEngine();
 }
 
 function isTauri() {
@@ -32,6 +40,7 @@ type Job = {
 };
 
 export default function App() {
+  const [view, setView] = useState<"jobs" | "prefs">("jobs");
   const [jobs, setJobs] = useState<Job[]>([]);
   const [err, setErr] = useState<string>("");
 
@@ -51,7 +60,7 @@ export default function App() {
 
   useEffect(() => {
     if (isTauri()) {
-      startEngine();
+      startEngineOnce();
     }
 
     refresh();
@@ -61,6 +70,10 @@ export default function App() {
     return stop;
   }, []);
 
+  if (view === "prefs") {
+    return <Preferences onBack={() => setView("jobs")} />;
+  }
+
   return (
     <div style={{ fontFamily: "system-ui", padding: 16 }}>
       <h2 style={{ margin: 0 }}>JobHunt</h2>
@@ -69,9 +82,7 @@ export default function App() {
         <button onClick={() => seedJob().then(refresh).catch((e) => setErr(String(e)))}>
           Seed fake job
         </button>
-        <button onClick={() => setView(view === "jobs" ? "prefs" : "jobs")}>
-          {view === "jobs" ? "Preferences" : "Back to Jobs"}
-        </button>
+        <button onClick={() => setView("prefs")}>Preferences</button>
       </div>
 
       {err && (
