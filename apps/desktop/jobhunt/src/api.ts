@@ -23,3 +23,27 @@ export function events(onMessage: (data: any) => void) {
   });
   return () => es.close();
 }
+
+export type WeightedTerm = { term: string; weight: number };
+
+export type AppConfig = {
+  titles: string[];
+  keywords: WeightedTerm[];
+  penalties: WeightedTerm[];
+};
+
+export async function getConfig(): Promise<AppConfig> {
+  const res = await fetch(`${ENGINE_BASE}/config`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function putConfig(cfg: AppConfig): Promise<AppConfig> {
+  const res = await fetch(`${ENGINE_BASE}/config`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(cfg),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
