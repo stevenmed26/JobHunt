@@ -8,41 +8,41 @@ import (
 )
 
 type Rule struct {
-	Tag    string   `yaml:"tag"`
-	Weight int      `yaml:"weight"`
-	Any    []string `yaml:"any"`
+	Tag    string   `yaml:"tag" json:"tag"`
+	Weight int      `yaml:"weight" json:"weight"`
+	Any    []string `yaml:"any" json:"any"`
 }
 
 type Penalty struct {
-	Reason string   `yaml:"reason"`
-	Weight int      `yaml:"weight"`
-	Any    []string `yaml:"any"`
+	Reason string   `yaml:"reason" json:"reason"`
+	Weight int      `yaml:"weight" json:"weight"`
+	Any    []string `yaml:"any" json:"any"`
 }
 
 type Config struct {
 	App struct {
-		Port    int    `yaml:"port"`
-		DataDir string `yaml:"data_dir"`
-	} `yaml:"app"`
+		Port    int    `yaml:"port" json:"port"`
+		DataDir string `yaml:"data_dir" json:"data_dir"`
+	} `yaml:"app" json:"app"`
 
 	Polling struct {
-		EmailSeconds      int `yaml:"email_seconds"`
-		FastLaneSeconds   int `yaml:"fast_lane_seconds"`
-		NormalLaneSeconds int `yaml:"normal_lane_seconds"`
-	} `yaml:"polling"`
+		EmailSeconds      int `yaml:"email_seconds" json:"email_seconds"`
+		FastLaneSeconds   int `yaml:"fast_lane_seconds" json:"fast_lane_seconds"`
+		NormalLaneSeconds int `yaml:"normal_lane_seconds" json:"normal_lane_seconds"`
+	} `yaml:"polling" json:"polling"`
 
 	Filters struct {
-		RemoteOK       bool     `yaml:"remote_ok"`
-		LocationsAllow []string `yaml:"locations_allow"`
-		LocationsBlock []string `yaml:"locations_block"`
-	} `yaml:"filters"`
+		RemoteOK       bool     `yaml:"remote_ok" json:"remote_ok"`
+		LocationsAllow []string `yaml:"locations_allow" json:"locations_allow"`
+		LocationsBlock []string `yaml:"locations_block" json:"locations_block"`
+	} `yaml:"filters" json:"filters"`
 
 	Scoring struct {
-		NotifyMinScore int       `yaml:"notify_min_score"`
-		TitleRules     []Rule    `yaml:"title_rules"`
-		KeywordRules   []Rule    `yaml:"keyword_rules"`
-		Penalties      []Penalty `yaml:"penalties"`
-	} `yaml:"scoring"`
+		NotifyMinScore int       `yaml:"notify_min_score" json:"notify_min_score"`
+		TitleRules     []Rule    `yaml:"title_rules" json:"title_rules"`
+		KeywordRules   []Rule    `yaml:"keyword_rules" json:"keyword_rules"`
+		Penalties      []Penalty `yaml:"penalties" json:"penalties"`
+	} `yaml:"scoring" json:"scoring"`
 }
 
 func Load(path string) (Config, error) {

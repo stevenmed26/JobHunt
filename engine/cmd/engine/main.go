@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -69,7 +71,6 @@ func (h *eventHub) publish(evt string) {
 }
 
 func main() {
-	// Engine data dir: use env if provided (Tauri can pass one), else local folder.
 	dataDir := os.Getenv("JOBHUNT_DATA_DIR")
 	if dataDir == "" {
 		dataDir = "."
@@ -78,8 +79,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	defaultCfgPath := filepath.Join("config", "config.yml")
-	userCfgPath, err := config.EnsureUserConfig(dataDir, defaultCfgPath)
+	userCfgPath, err := config.EnsureUserConfig(dataDir)
 	if err != nil {
 		log.Fatalf("config bootstrap failed: %v", err)
 	}
@@ -94,6 +94,11 @@ func main() {
 		log.Fatalf("config load failed (%s): %v", userCfgPath, err)
 	}
 	cfgVal.Store(cfg)
+
+	// scorer := func(job domain.JobLead) (int, []string) {
+	// 	c := cfgVal.Load().(config.Config)
+	// 	return rank.YAMLScorer{Cfg: c}.Score(job)
+	// }
 
 	dbPath := filepath.Join(dataDir, "jobhunt.db")
 	db, err := sql.Open("sqlite", dbPath)
@@ -119,6 +124,70 @@ func main() {
 			return
 		}
 		writeJSON(w, jobs)
+	})
+	mux.HandleFunc("/jobs/", func(w http.ResponseWriter, r *http.Request) {
+		// expects /jobs/{id}
+		if r.Method != http.MethodDelete {
+			http.Error(w, "DELETE only", 405)
+			return
+		}
+
+		idStr := strings.TrimPrefix(r.URL.Path, "/jobs/")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			http.Error(w, "invalid id", 400)
+			return
+		}
+
+		if err := deleteJob(r.Context(), db, id); err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+
+		// Optional: notify UI via SSE so it refreshes
+		hub.publish(`{"type":"job_deleted","id":` + fmt.Sprint(id) + `}`)
+
+		writeJSON(w, map[string]any{"ok": true, "id": id})
+	})
+
+	mux.HandleFunc("/config", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			cur := cfgVal.Load().(config.Config)
+			writeJSON(w, cur)
+			return
+		case http.MethodPut:
+			var incoming config.Config
+			dec := json.NewDecoder(r.Body)
+			//dec.DisallowUnknownFields()
+			if err := dec.Decode(&incoming); err != nil {
+				http.Error(w, "invalid JSON: "+err.Error(), 400)
+				return
+			}
+
+			if err := config.SaveAtomic(userCfgPath, incoming); err != nil {
+				http.Error(w, err.Error(), 400)
+				return
+			}
+
+			// Reload from disk
+			saved, err := loadCfg()
+			if err != nil {
+				http.Error(w, "saved but reload failed: "+err.Error(), 500)
+				return
+			}
+			cfgVal.Store(saved)
+			writeJSON(w, saved)
+			return
+
+		default:
+			http.Error(w, "GET or PUT only", 405)
+			return
+		}
+	})
+	mux.HandleFunc("/config/path", func(w http.ResponseWriter, r *http.Request) {
+		abs, _ := filepath.Abs(userCfgPath)
+		writeJSON(w, map[string]any{"path": abs})
 	})
 	mux.HandleFunc("/seed", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -188,7 +257,7 @@ func cors(next http.Handler) http.Handler {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Vary", "Origin")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-			w.Header().Set("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
+			w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS")
 		}
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(204)
@@ -270,4 +339,9 @@ func writeJSON(w http.ResponseWriter, v any) {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	_ = enc.Encode(v)
+}
+
+func deleteJob(ctx context.Context, db *sql.DB, id int64) error {
+	_, err := db.ExecContext(ctx, `DELETE FROM jobs WHERE id = ?;`, id)
+	return err
 }

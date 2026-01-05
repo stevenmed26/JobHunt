@@ -1,20 +1,18 @@
 import { useEffect, useState } from "react";
-import { events, getJobs, seedJob } from "./api";
+import { events, getJobs, seedJob, deleteJob } from "./api";
+import Preferences from "./Preferences";
 import { Command } from "@tauri-apps/plugin-shell";
 
-async function startEngine() {
-  try {
-    const cmd = Command.sidecar("bin/engine");
-    await cmd.spawn();
-    console.log("Engine sidecar started");
-  } catch (e) {
-    console.error("Failed to start engine", e);
-  }
+async function startEngineDebug() {
+  const cmd = Command.sidecar("engine");
+  cmd.stdout.on("data", (line) => console.log("[engine stdout]", line));
+  cmd.stderr.on("data", (line) => console.error("[engine stderr]", line));
+  cmd.on("close", (e) => console.error("[engine closed]", e));
+  await cmd.spawn();
 }
 
-function isTauri() {
-  return "__TAURI_INTERNALS__" in window;
-}
+
+
 
 
 type Job = {
@@ -30,6 +28,7 @@ type Job = {
 };
 
 export default function App() {
+  const [view, setView] = useState<"jobs" | "prefs">("jobs");
   const [jobs, setJobs] = useState<Job[]>([]);
   const [err, setErr] = useState<string>("");
 
@@ -48,16 +47,18 @@ export default function App() {
 
 
   useEffect(() => {
-    if (isTauri()) {
-      startEngine();
-    }
+    startEngineDebug()
 
     refresh();
     const stop = events((msg) => {
-      if (msg?.type === "job_created") refresh();
+      if (msg?.type === "job_created" || msg?.type === "job_deleted") refresh();
     });
     return stop;
   }, []);
+
+  if (view === "prefs") {
+    return <Preferences onBack={() => setView("jobs")} />;
+  }
 
   return (
     <div style={{ fontFamily: "system-ui", padding: 16 }}>
@@ -67,6 +68,7 @@ export default function App() {
         <button onClick={() => seedJob().then(refresh).catch((e) => setErr(String(e)))}>
           Seed fake job
         </button>
+        <button onClick={() => setView("prefs")}>Preferences</button>
       </div>
 
       {err && (
@@ -90,6 +92,12 @@ export default function App() {
               marginBottom: 10,
             }}
           >
+            <button
+              onClick={() => {
+                if (!confirm(`Remove "${j.title}"?`)) return;
+                deleteJob(j.id).then(refresh).catch((e) => setErr(String(e)))
+              }}
+            >Remove</button>
             <div style={{ fontWeight: 700 }}>{j.title}</div>
             <div style={{ opacity: 0.85 }}>
               {j.company} · {j.location} · {j.workMode} · score {j.score}
