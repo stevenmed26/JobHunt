@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-
+    "engine:kill": "cmd /c \"taskkill /F /IM engine.exe 2>nul & taskkill /F /IM engine-x86_64-pc-windows-msvc.exe 2>nul\"",
     "tauri:dev": "node scripts/dev-tauri.js",
 
     "tauri:build": "npm run engine:build && tauri build"

@@ -77,8 +77,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	defaultCfgPath := filepath.Join("config", "config.yml")
-	userCfgPath, err := config.EnsureUserConfig(dataDir, defaultCfgPath)
+	userCfgPath, err := config.EnsureUserConfig(dataDir)
 	if err != nil {
 		log.Fatalf("config bootstrap failed: %v", err)
 	}

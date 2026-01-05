@@ -1,6 +1,16 @@
 import { useEffect, useState } from "react";
 import { events, getJobs, seedJob } from "./api";
 import Preferences from "./Preferences";
+import { Command } from "@tauri-apps/plugin-shell";
+
+async function startEngineDebug() {
+  const cmd = Command.sidecar("engine");
+  cmd.stdout.on("data", (line) => console.log("[engine stdout]", line));
+  cmd.stderr.on("data", (line) => console.error("[engine stderr]", line));
+  cmd.on("close", (e) => console.error("[engine closed]", e));
+  await cmd.spawn();
+}
+
 
 
 
@@ -37,6 +47,7 @@ export default function App() {
 
 
   useEffect(() => {
+    startEngineDebug()
 
     refresh();
     const stop = events((msg) => {
