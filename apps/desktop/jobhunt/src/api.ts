@@ -75,3 +75,9 @@ export async function putConfig(cfg: EngineConfig): Promise<EngineConfig> {
   const raw = await res.json();
   return normalizeConfig(raw);
 }
+
+export async function deleteJob(id: number) {
+  const res = await fetch(`${ENGINE_BASE}/jobs/${id}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}

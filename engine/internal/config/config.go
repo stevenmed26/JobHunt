@@ -35,7 +35,7 @@ type Config struct {
 		RemoteOK       bool     `yaml:"remote_ok" json:"remote_ok"`
 		LocationsAllow []string `yaml:"locations_allow" json:"locations_allow"`
 		LocationsBlock []string `yaml:"locations_block" json:"locations_block"`
-	} `yaml:"filters" json:"tag"`
+	} `yaml:"filters" json:"filters"`
 
 	Scoring struct {
 		NotifyMinScore int       `yaml:"notify_min_score" json:"notify_min_score"`

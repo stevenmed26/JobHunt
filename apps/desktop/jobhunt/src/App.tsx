@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { events, getJobs, seedJob } from "./api";
+import { events, getJobs, seedJob, deleteJob } from "./api";
 import Preferences from "./Preferences";
 import { Command } from "@tauri-apps/plugin-shell";
 
@@ -51,7 +51,7 @@ export default function App() {
 
     refresh();
     const stop = events((msg) => {
-      if (msg?.type === "job_created") refresh();
+      if (msg?.type === "job_created" || msg?.type === "job_deleted") refresh();
     });
     return stop;
   }, []);
@@ -92,6 +92,12 @@ export default function App() {
               marginBottom: 10,
             }}
           >
+            <button
+              onClick={() => {
+                if (!confirm(`Remove "${j.title}"?`)) return;
+                deleteJob(j.id).then(refresh).catch((e) => setErr(String(e)))
+              }}
+            >Remove</button>
             <div style={{ fontWeight: 700 }}>{j.title}</div>
             <div style={{ opacity: 0.85 }}>
               {j.company} · {j.location} · {j.workMode} · score {j.score}

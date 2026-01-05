@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -123,6 +125,31 @@ func main() {
 		}
 		writeJSON(w, jobs)
 	})
+	mux.HandleFunc("/jobs/", func(w http.ResponseWriter, r *http.Request) {
+		// expects /jobs/{id}
+		if r.Method != http.MethodDelete {
+			http.Error(w, "DELETE only", 405)
+			return
+		}
+
+		idStr := strings.TrimPrefix(r.URL.Path, "/jobs/")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			http.Error(w, "invalid id", 400)
+			return
+		}
+
+		if err := deleteJob(r.Context(), db, id); err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+
+		// Optional: notify UI via SSE so it refreshes
+		hub.publish(`{"type":"job_deleted","id":` + fmt.Sprint(id) + `}`)
+
+		writeJSON(w, map[string]any{"ok": true, "id": id})
+	})
+
 	mux.HandleFunc("/config", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
@@ -132,7 +159,7 @@ func main() {
 		case http.MethodPut:
 			var incoming config.Config
 			dec := json.NewDecoder(r.Body)
-			dec.DisallowUnknownFields()
+			//dec.DisallowUnknownFields()
 			if err := dec.Decode(&incoming); err != nil {
 				http.Error(w, "invalid JSON: "+err.Error(), 400)
 				return
@@ -230,7 +257,7 @@ func cors(next http.Handler) http.Handler {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Vary", "Origin")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-			w.Header().Set("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
+			w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS")
 		}
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(204)
@@ -312,4 +339,9 @@ func writeJSON(w http.ResponseWriter, v any) {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	_ = enc.Encode(v)
+}
+
+func deleteJob(ctx context.Context, db *sql.DB, id int64) error {
+	_, err := db.ExecContext(ctx, `DELETE FROM jobs WHERE id = ?;`, id)
+	return err
 }
