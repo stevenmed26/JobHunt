@@ -1,20 +1,25 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use tauri::{Manager};
+use tauri_plugin_shell::ShellExt;
 
 fn main() {
   tauri::Builder::default()
     .plugin(tauri_plugin_opener::init())
     .plugin(tauri_plugin_shell::init())
     .setup(|app| {
-      // If you want to spawn the sidecar immediately, do it here.
-      // NOTE: In Tauri v2, it's usually best to call sidecars from JS via the shell plugin,
-      // but you *can* trigger it here too if you prefer.
+      // Spawn Go engine sidecar on app startup (synchronous).
+      let _child = app
+        .shell()
+        .sidecar("bin/engine")
+        .expect("failed to create sidecar command")
+        .spawn()
+        .expect("failed to spawn engine sidecar");
 
-      // Example: just log that setup ran
-      let _window = app.get_webview_window("main").unwrap();
+      println!("[engine] sidecar started");
+
       Ok(())
     })
+
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
 }

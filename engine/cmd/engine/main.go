@@ -159,6 +159,10 @@ func main() {
 			return
 		}
 	})
+	mux.HandleFunc("/config/path", func(w http.ResponseWriter, r *http.Request) {
+		abs, _ := filepath.Abs(userCfgPath)
+		writeJSON(w, map[string]any{"path": abs})
+	})
 	mux.HandleFunc("/seed", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "POST only", 405)

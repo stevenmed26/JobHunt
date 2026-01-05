@@ -1,30 +1,8 @@
 import { useEffect, useState } from "react";
 import { events, getJobs, seedJob } from "./api";
-import { Command } from "@tauri-apps/plugin-shell";
 import Preferences from "./Preferences";
 
 
-async function startEngine() {
-  try {
-    const cmd = Command.sidecar("bin/engine");
-    await cmd.spawn();
-    console.log("Engine sidecar started");
-  } catch (e) {
-    console.error("Failed to start engine", e);
-  }
-}
-
-let engineStarted = false;
-
-async function startEngineOnce() {
-  if (engineStarted) return;
-  engineStarted = true;
-  await startEngine();
-}
-
-function isTauri() {
-  return "__TAURI_INTERNALS__" in window;
-}
 
 
 type Job = {
@@ -59,9 +37,6 @@ export default function App() {
 
 
   useEffect(() => {
-    if (isTauri()) {
-      startEngineOnce();
-    }
 
     refresh();
     const stop = events((msg) => {
