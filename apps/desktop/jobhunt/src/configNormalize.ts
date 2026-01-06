@@ -33,7 +33,7 @@ export function normalizeConfig(raw: any): EngineConfig {
     polling: { email_seconds: 60, fast_lane_seconds: 60, normal_lane_seconds: 300 },
     filters: { remote_ok: true, locations_allow: [], locations_block: [] },
     scoring: { notify_min_score: 0, title_rules: [], keyword_rules: [], penalties: [] },
-    email:  { enabled: true, imap_host: "", imap_port: 993, username: "", app_password: "", mailbox: "", search_subject_any: []}
+    email:  { enabled: false, imap_host: "", imap_port: 993, username: "", app_password: "", mailbox: "", search_subject_any: []}
   };
 
   cfg.app.port = asInt(raw?.app?.port, cfg.app.port);

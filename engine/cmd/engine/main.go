@@ -21,6 +21,8 @@ import (
 	"jobhunt-engine/internal/scrape"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/gofrs/flock"
 )
 
 type Job struct {
@@ -80,27 +82,46 @@ func (h *eventHub) publish(evt string) {
 }
 
 func main() {
+	if err := run(); err != nil {
+		log.Printf("fatal: %v", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	dataDir := os.Getenv("JOBHUNT_DATA_DIR")
 	if dataDir == "" {
 		dataDir = "."
 	}
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("%s", err)
 	}
 
 	lockPath := filepath.Join(dataDir, "engine.lock")
-	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
-	if err != nil {
-		log.Fatalf("engine is already running (lock exists): %s", lockPath)
+	lk := flock.New(lockPath)
+
+	// TryLock is non-blocking (preferred for “only one instance”)
+	deadline := time.Now().Add(1 * time.Second)
+	for {
+		locked, err := lk.TryLock()
+		if err != nil {
+			return err
+		}
+		if locked {
+			break
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("engine is already running: %s", lockPath)
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 	defer func() {
-		lockFile.Close()
-		_ = os.Remove(lockPath)
+		_ = lk.Unlock()
 	}()
 
 	userCfgPath, err := config.EnsureUserConfig(dataDir)
 	if err != nil {
-		log.Fatalf("config bootstrap failed: %v", err)
+		return fmt.Errorf("config bootstrap failed: %v", err)
 	}
 	// Load config and keep it reloadable
 	var cfgVal atomic.Value // stores config.Config
@@ -109,7 +130,7 @@ func main() {
 	}
 	cfg, err := loadCfg()
 	if err != nil {
-		log.Fatalf("config load failed (%s): %v", userCfgPath, err)
+		return fmt.Errorf("config load failed (%s): %v", userCfgPath, err)
 	}
 	cfgVal.Store(cfg)
 
@@ -137,12 +158,12 @@ func main() {
 	db.SetMaxIdleConns(1)
 	db.SetConnMaxLifetime(0)
 	if err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("%s", err)
 	}
 	defer db.Close()
 
 	if err := migrate(db); err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("%s", err)
 	}
 
 	hub := newHub()
@@ -349,7 +370,7 @@ func main() {
 	addr := "127.0.0.1:38471"
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("%s", err)
 	}
 	log.Printf("engine listening on http://%s (db=%s)", addr, dbPath)
 
@@ -357,7 +378,16 @@ func main() {
 		Handler:           cors(mux),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
-	log.Fatal(srv.Serve(ln))
+
+	mux.HandleFunc("/shutdown", func(w http.ResponseWriter, r *http.Request) {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = srv.Shutdown(ctx)
+		}()
+		w.WriteHeader(http.StatusOK)
+	})
+	return fmt.Errorf("%s", srv.Serve(ln))
 }
 
 func cors(next http.Handler) http.Handler {
@@ -394,35 +424,25 @@ CREATE TABLE IF NOT EXISTS jobs (
 		return err
 	}
 
-	{
-		var has bool
-		rows, err := db.Query(`PRAGMA table_info(jobs);`)
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
+	// Does column exist?
+	var one int
+	err := db.QueryRow(`
+SELECT 1
+FROM pragma_table_info('jobs')
+WHERE name = 'source_id'
+LIMIT 1;
+`).Scan(&one)
 
-		for rows.Next() {
-			var cid int
-			var name, typ string
-			var notnull, pk int
-			var dflt sql.NullString
-			if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
-				return err
-			}
-			if name == "source_id" {
-				has = true
-				break
-			}
-		}
-		if err := rows.Err(); err != nil {
-			return err
-		}
+	has := true
+	if err == sql.ErrNoRows {
+		has = false
+	} else if err != nil {
+		return err
+	}
 
-		if !has {
-			if _, err := db.Exec(`ALTER TABLE jobs ADD COLUMN source_id TEXT NOT NULL DEFAULT '';`); err != nil {
-				return err
-			}
+	if !has {
+		if _, err := db.Exec(`ALTER TABLE jobs ADD COLUMN source_id TEXT NOT NULL DEFAULT '';`); err != nil {
+			return err
 		}
 	}
 
