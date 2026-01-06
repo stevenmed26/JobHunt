@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"time"
 )
 
@@ -17,6 +18,13 @@ type Job struct {
 	Score    int      `json:"score"`
 	Tags     []string `json:"tags"`
 	Date     string   `json:"date"`
+}
+
+type ListJobsOpts struct {
+	Sort   string // score | date | company | title
+	Order  string // asc | desc
+	Window string // 24h | 7d | all
+	Limit  int
 }
 
 func Migrate(db *sql.DB) error {
@@ -68,12 +76,61 @@ WHERE source_id != '';
 	return nil
 }
 
-func ListJobs(ctx context.Context, db *sql.DB) ([]Job, error) {
-	rows, err := db.QueryContext(ctx, `
+func ListJobs(ctx context.Context, db *sql.DB, opts ListJobsOpts) ([]Job, error) {
+	// defaults
+	if opts.Sort == "" {
+		opts.Sort = "score"
+	}
+	if opts.Window == "" {
+		opts.Window = "7d"
+	}
+	if opts.Limit <= 0 || opts.Limit > 2000 {
+		opts.Limit = 500
+	}
+
+	// whitelist sort columns (prevents SQL injection)
+	sortCol := map[string]string{
+		"score":   "score",
+		"date":    "date",
+		"company": "company",
+		"title":   "title",
+	}[opts.Sort]
+	if sortCol == "" {
+		sortCol = "score"
+	}
+	switch opts.Sort {
+	case "score":
+		opts.Order = "desc"
+	case "date":
+		opts.Order = "desc"
+	case "company":
+		opts.Order = "asc"
+	case "title":
+		opts.Order = "asc"
+	}
+
+	// time window filter (date is TEXT; this assumes ISO8601/RFC3339 or SQLite-friendly datetime strings)
+	where := ""
+	switch opts.Window {
+	case "24h":
+		where = "WHERE date >= datetime('now','-24 hours')"
+	case "7d":
+		where = "WHERE date >= datetime('now','-7 days')"
+	case "all":
+		// no filter
+	default:
+		where = "WHERE date >= datetime('now','-7 days')"
+	}
+
+	query := fmt.Sprintf(`
 SELECT id, company, title, location, work_mode, url, score, tags, date
 FROM jobs
-ORDER BY date DESC
-LIMIT 200;`)
+%s
+ORDER BY %s %s
+LIMIT ?;
+`, where, sortCol, opts.Order)
+
+	rows, err := db.QueryContext(ctx, query, opts.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -84,16 +141,29 @@ LIMIT 200;`)
 		var j Job
 		var tagsJSON string
 		var dateStr string
-		var datePrs time.Time
-		if err := rows.Scan(&j.ID, &j.Company, &j.Title, &j.Location, &j.WorkMode, &j.URL, &j.Score, &tagsJSON, &dateStr); err != nil {
+		var parsedDate time.Time
+		if err := rows.Scan(
+			&j.ID,
+			&j.Company,
+			&j.Title,
+			&j.Location,
+			&j.WorkMode,
+			&j.URL,
+			&j.Score,
+			&tagsJSON,
+			&dateStr,
+		); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(tagsJSON), &j.Tags)
-		datePrs, _ = time.Parse(time.RFC3339, dateStr)
-		j.Date = datePrs.Format("2006-01-02 15:04:05")
+		parsedDate, _ = time.Parse(time.RFC3339, dateStr)
+		j.Date = parsedDate.Format("2006-01-02 15:04:05")
 		out = append(out, j)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func SeedJob(ctx context.Context, db *sql.DB) (Job, error) {

@@ -2,10 +2,10 @@ import { normalizeConfig } from "./configNormalize";
 
 export const ENGINE_BASE = "http://127.0.0.1:38471";
 
-export async function getJobs() {
-  const res = await fetch(`${ENGINE_BASE}/jobs`);
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
+export async function getJobs(qs?: string) {
+  const r = await fetch(qs ? `${ENGINE_BASE}/jobs?${qs}` : "/jobs");
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
 }
 
 export async function seedJob() {

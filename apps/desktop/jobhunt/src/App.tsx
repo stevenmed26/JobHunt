@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { events, getJobs, seedJob, deleteJob } from "./api";
 import Preferences from "./Preferences";
 import Scraping from "./Scraping";
@@ -28,7 +28,13 @@ type Job = {
   date: string;
 };
 
+type SortKey = "score" | "date" | "company" | "title";
+type WindowKey = "24h" | "7d" | "all";
+
 export default function App() {
+  const [sort, setSort] = useState<SortKey>("score");
+  const [windowKey, setWindowKey] = useState<WindowKey>("7d");
+
   const [view, setView] = useState<"jobs" | "prefs" | "scrape">("jobs");
   const [jobs, setJobs] = useState<Job[]>([]);
   const [err, setErr] = useState<string>("");
@@ -36,7 +42,7 @@ export default function App() {
   async function refresh() {
     try {
       setErr("");
-      const data = await getJobs();
+      const data = await getJobs(params);
 
       // HARD GUARANTEE jobs is always an array
       setJobs(Array.isArray(data) ? data : []);
@@ -46,16 +52,27 @@ export default function App() {
     }
   }
 
+  useEffect(() => {
+    startEngineDebug().catch(console.error);
+  }, []);
+
+  const params = useMemo(() => {
+    const p = new URLSearchParams({
+      sort,
+      window: windowKey,
+    });
+    return p.toString();
+  }, [sort, windowKey]);
+
 
   useEffect(() => {
-    startEngineDebug()
 
     refresh();
     const stop = events((msg) => {
       if (msg?.type === "job_created" || msg?.type === "job_deleted") refresh();
     });
     return stop;
-  }, []);
+  }, [params]);
 
   if (view === "prefs") {
     return <Preferences onBack={() => setView("jobs")} />;
@@ -74,6 +91,26 @@ export default function App() {
         </button>
         <button onClick={() => setView("prefs")}>Preferences</button>
         <button onClick={() => setView("scrape")}>Scraping</button>
+      </div>
+      <div style={{ display: "flex", gap: 12, alignItems: "center", marginTop: 12 }}>
+        <label>
+          Sort{" "}
+          <select value={sort} onChange={(e) => setSort(e.target.value as SortKey)}>
+            <option value="score">Score</option>
+            <option value="date">Date</option>
+            <option value="company">Company</option>
+            <option value="title">Title</option>
+          </select>
+        </label>
+
+        <label>
+          Time{" "}
+          <select value={windowKey} onChange={(e) => setWindowKey(e.target.value as WindowKey)}>
+            <option value="24h">Last 24 hours</option>
+            <option value="7d">Last week</option>
+            <option value="all">All</option>
+          </select>
+        </label>
       </div>
 
       {err && (

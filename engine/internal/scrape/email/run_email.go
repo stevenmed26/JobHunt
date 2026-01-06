@@ -1,22 +1,11 @@
-package scrape
+package email_scrape
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha1"
 	"database/sql"
-	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html"
-	"io"
-	"mime"
-	"mime/multipart"
-	"mime/quotedprintable"
-	"net/mail"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -27,6 +16,19 @@ import (
 
 	"github.com/emersion/go-imap/v2"
 )
+
+type jobRow struct {
+	Company     string
+	Title       string
+	Location    string
+	WorkMode    string
+	Description string
+	URL         string
+	Score       int
+	Tags        []string
+	ReceivedAt  time.Time
+	SourceID    string
+}
 
 // RunEmailScrapeOnce scans UNSEEN emails, but ONLY those whose subject matches cfg.Email.SearchSubjectAny.
 // It extracts job-ish URLs and inserts rows into jobs (deduped by source_id), then marks emails \Seen.
@@ -229,19 +231,6 @@ runLoop:
 	return added, nil
 }
 
-type jobRow struct {
-	Company     string
-	Title       string
-	Location    string
-	WorkMode    string
-	Description string
-	URL         string
-	Score       int
-	Tags        []string
-	ReceivedAt  time.Time
-	SourceID    string
-}
-
 func insertJobIfNew(ctx context.Context, db *sql.DB, j jobRow) (bool, error) {
 	if j.Company == "" {
 		j.Company = "Unknown"
@@ -287,188 +276,7 @@ VALUES(?,?,?,?,?,?,?,?,?);`,
 	return n > 0, nil
 }
 
-// ---------------- RFC822 / MIME ----------------
-
-func parseRFC822(raw []byte, fallbackSubject string) (messageID, bodyText, subject string) {
-	if len(raw) == 0 {
-		return "", "", fallbackSubject
-	}
-
-	msg, err := mail.ReadMessage(bytes.NewReader(raw))
-	if err != nil {
-		return "", string(raw), fallbackSubject
-	}
-
-	messageID = strings.TrimSpace(msg.Header.Get("Message-Id"))
-	if messageID == "" {
-		messageID = strings.TrimSpace(msg.Header.Get("Message-ID"))
-	}
-
-	subject = strings.TrimSpace(msg.Header.Get("Subject"))
-	if subject == "" {
-		subject = fallbackSubject
-	}
-
-	bodyRaw, _ := io.ReadAll(io.LimitReader(msg.Body, 6<<20)) // 6MB cap
-	plain, htmlPart := extractMIMETextParts(msg.Header, bodyRaw)
-
-	if htmlPart != "" {
-		bodyText = htmlPart + "\n" + plain
-	} else {
-		bodyText = plain
-	}
-	if bodyText == "" {
-		bodyText = string(bodyRaw)
-	}
-	return messageID, bodyText, subject
-}
-
-func extractMIMETextParts(h mail.Header, body []byte) (plain, htmlPart string) {
-	ct := h.Get("Content-Type")
-	cte := strings.ToLower(strings.TrimSpace(h.Get("Content-Transfer-Encoding")))
-
-	mediaType, params, err := mime.ParseMediaType(ct)
-	if err != nil {
-		s := decodeTransferEncoding(body, cte)
-		return string(s), ""
-	}
-	mediaType = strings.ToLower(mediaType)
-
-	if strings.HasPrefix(mediaType, "multipart/") {
-		boundary := params["boundary"]
-		if boundary == "" {
-			s := decodeTransferEncoding(body, cte)
-			return string(s), ""
-		}
-		mr := multipart.NewReader(bytes.NewReader(body), boundary)
-
-		var bestPlain, bestHTML string
-		for {
-			p, err := mr.NextPart()
-			if err != nil {
-				break
-			}
-			partCTE := strings.ToLower(strings.TrimSpace(p.Header.Get("Content-Transfer-Encoding")))
-			partCT := p.Header.Get("Content-Type")
-			pMedia, _, _ := mime.ParseMediaType(partCT)
-			pMedia = strings.ToLower(pMedia)
-
-			b, _ := io.ReadAll(io.LimitReader(p, 4<<20))
-			b = decodeTransferEncoding(b, partCTE)
-
-			if strings.HasPrefix(pMedia, "multipart/") {
-				pl, ht := extractMIMETextParts(mail.Header(p.Header), b)
-				if len(pl) > len(bestPlain) {
-					bestPlain = pl
-				}
-				if len(ht) > len(bestHTML) {
-					bestHTML = ht
-				}
-				continue
-			}
-
-			switch {
-			case strings.HasPrefix(pMedia, "text/plain"):
-				if len(b) > len(bestPlain) {
-					bestPlain = string(b)
-				}
-			case strings.HasPrefix(pMedia, "text/html"):
-				if len(b) > len(bestHTML) {
-					bestHTML = string(b)
-				}
-			}
-		}
-		return bestPlain, bestHTML
-	}
-
-	s := decodeTransferEncoding(body, cte)
-	if strings.HasPrefix(mediaType, "text/html") {
-		return "", string(s)
-	}
-	return string(s), ""
-}
-
-func decodeTransferEncoding(b []byte, cte string) []byte {
-	switch cte {
-	case "base64":
-		dec := base64.NewDecoder(base64.StdEncoding, bytes.NewReader(b))
-		out, _ := io.ReadAll(io.LimitReader(dec, 6<<20))
-		return out
-	case "quoted-printable":
-		dec := quotedprintable.NewReader(bytes.NewReader(b))
-		out, _ := io.ReadAll(io.LimitReader(dec, 6<<20))
-		return out
-	default:
-		return b
-	}
-}
-
-// ---------------- Link extraction ----------------
-
-var (
-	reHref = regexp.MustCompile(`(?is)<a[^>]+href=["']([^"'#]+)["'][^>]*>(.*?)</a>`)
-	reTags = regexp.MustCompile(`(?is)<[^>]+>`)
-	reURL  = regexp.MustCompile(`https?://[^\s<>"']+`)
-)
-
-func extractLinksFromBody(body string) (urls []string, contexts map[string]string) {
-	contexts = make(map[string]string)
-
-	lower := strings.ToLower(body)
-	textVersion := body
-
-	// Prefer anchors if HTML-ish
-	if strings.Contains(lower, "<html") || strings.Contains(lower, "<a ") {
-		textVersion = htmlToText(body)
-
-		matches := reHref.FindAllStringSubmatch(body, -1)
-		for _, m := range matches {
-			href := strings.TrimSpace(html.UnescapeString(m[1]))
-			txt := strings.TrimSpace(reTags.ReplaceAllString(m[2], " "))
-			txt = strings.Join(strings.Fields(html.UnescapeString(txt)), " ")
-
-			if href == "" {
-				continue
-			}
-
-			cu := canonicalizeURL(href)
-			urls = append(urls, href)
-
-			// store best (longest) context text for this canonical URL
-			if len(txt) > len(contexts[cu]) {
-				contexts[cu] = txt
-			}
-		}
-	}
-
-	// Naked URLs from text (not raw HTML)
-	for _, u := range reURL.FindAllString(textVersion, -1) {
-		urls = append(urls, strings.TrimRight(u, ".,);:]\"'"))
-	}
-
-	return urls, contexts
-}
-
-func htmlToText(s string) string {
-	s = reTags.ReplaceAllString(s, " ")
-	s = html.UnescapeString(s)
-	return strings.Join(strings.Fields(s), " ")
-}
-
 // ---------------- Matching / heuristics ----------------
-
-func decodeRFC2047(s string) string {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return s
-	}
-	dec := new(mime.WordDecoder)
-	out, err := dec.DecodeHeader(s)
-	if err != nil {
-		return s
-	}
-	return out
-}
 
 func containsAnyCI(s string, any []string) bool {
 	ls := strings.ToLower(s)
@@ -574,17 +382,4 @@ func makeSourceID(messageID, urlStr, subject, from string) string {
 		base = "from:" + from + "|sub:" + subject + "|url:" + nurl
 	}
 	return hashString(base)
-}
-
-func hashString(s string) string {
-	sum := sha1.Sum([]byte(s))
-	return hex.EncodeToString(sum[:])
-}
-
-func clip(s string, max int) string {
-	s = strings.TrimSpace(s)
-	if max <= 0 || len(s) <= max {
-		return s
-	}
-	return s[:max]
 }

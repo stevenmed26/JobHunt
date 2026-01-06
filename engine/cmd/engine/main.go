@@ -21,7 +21,7 @@ import (
 	"sync/atomic"
 
 	"jobhunt-engine/internal/config"
-	"jobhunt-engine/internal/scrape"
+	email_scrape "jobhunt-engine/internal/scrape/email"
 	"jobhunt-engine/internal/store"
 
 	_ "modernc.org/sqlite"
@@ -163,11 +163,17 @@ func run() error {
 	startEmailPoller(db, &cfgVal, &scrapeStatus, hub)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, map[string]any{"ok": true, "time": time.Now().Format(time.RFC3339)})
-	})
 	mux.HandleFunc("/jobs", func(w http.ResponseWriter, r *http.Request) {
-		jobs, err := store.ListJobs(r.Context(), db)
+		q := r.URL.Query()
+
+		sort := q.Get("sort")     // "score" | "date" | "company" | "title"
+		window := q.Get("window") // "24h" | "7d" | "all"
+
+		jobs, err := store.ListJobs(r.Context(), db, store.ListJobsOpts{
+			Sort:   sort,
+			Window: window,
+			Limit:  500,
+		})
 		if err != nil {
 			http.Error(w, err.Error(), 500)
 			return
@@ -292,7 +298,7 @@ func run() error {
 		})
 
 		go func() {
-			added, err := scrape.RunEmailScrapeOnce(db, cfgVal.Load().(config.Config), func() {
+			added, err := email_scrape.RunEmailScrapeOnce(db, cfgVal.Load().(config.Config), func() {
 				hub.publish(`{"type":"job_created"}`)
 			})
 			now := time.Now().Format(time.RFC3339)
@@ -446,7 +452,7 @@ func startEmailPoller(db *sql.DB, cfgVal *atomic.Value, scrapeStatus *atomic.Val
 				LastOkAt:  st.LastOkAt,
 			})
 
-			added, err := scrape.RunEmailScrapeOnce(db, cfg, func() {
+			added, err := email_scrape.RunEmailScrapeOnce(db, cfg, func() {
 				hub.publish(`{"type":"job_created"}`)
 			})
 			now := time.Now().Format(time.RFC3339)

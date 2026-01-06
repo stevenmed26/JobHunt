@@ -1,5 +1,5 @@
-// internal/scrape/email.go
-package scrape
+// internal/scrape/email/email.go
+package email_scrape
 
 import (
 	"context"
