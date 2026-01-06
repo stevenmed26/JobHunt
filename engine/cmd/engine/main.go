@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/subtle"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -378,15 +381,13 @@ func run() error {
 		Handler:           cors(mux),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
+	shutdownToken, err := randomToken(32)
+	if err != nil {
+		return err
+	}
+	log.Printf("shutdown_token=%s", shutdownToken)
 
-	mux.HandleFunc("/shutdown", func(w http.ResponseWriter, r *http.Request) {
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			_ = srv.Shutdown(ctx)
-		}()
-		w.WriteHeader(http.StatusOK)
-	})
+	mux.HandleFunc("/shutdown", shutdownHandler(&shutdownToken, srv))
 	return fmt.Errorf("%s", srv.Serve(ln))
 }
 
@@ -572,4 +573,49 @@ func startEmailPoller(db *sql.DB, cfgVal *atomic.Value, scrapeStatus *atomic.Val
 			scrapeStatus.Store(next)
 		}
 	}()
+}
+
+func randomToken(n int) (string, error) {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+func shutdownHandler(token *string, srv *http.Server) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Local-only guard (covers typical desktop usage)
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil {
+			// RemoteAddr can sometimes be just a host; fall back safely
+			host = r.RemoteAddr
+		}
+		if host != "127.0.0.1" && host != "::1" && host != "localhost" {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+
+		// Token guard
+		got := r.Header.Get("X-Shutdown-Token")
+		if got == "" || subtle.ConstantTimeCompare([]byte(got), []byte(*token)) != 1 {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		// Respond immediately, then shutdown asynchronously
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("shutting down\n"))
+
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = srv.Shutdown(ctx)
+		}()
+	}
 }
