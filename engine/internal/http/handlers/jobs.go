@@ -7,11 +7,11 @@ import (
 	"strings"
 	"time"
 
-	"jobhunt-engine/internal/db"
+	"jobhunt-engine/internal/store"
 )
 
 type Handlers struct {
-	DB *db.DB
+	DB *store.DB
 }
 
 type jobRow struct {
