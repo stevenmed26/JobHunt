@@ -8,15 +8,15 @@ import (
 )
 
 type Job struct {
-	ID        int64     `json:"id"`
-	Company   string    `json:"company"`
-	Title     string    `json:"title"`
-	Location  string    `json:"location"`
-	WorkMode  string    `json:"workMode"`
-	URL       string    `json:"url"`
-	Score     int       `json:"score"`
-	Tags      []string  `json:"tags"`
-	FirstSeen time.Time `json:"firstSeen"`
+	ID       int64    `json:"id"`
+	Company  string   `json:"company"`
+	Title    string   `json:"title"`
+	Location string   `json:"location"`
+	WorkMode string   `json:"workMode"`
+	URL      string   `json:"url"`
+	Score    int      `json:"score"`
+	Tags     []string `json:"tags"`
+	Date     string   `json:"date"`
 }
 
 func Migrate(db *sql.DB) error {
@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   url TEXT NOT NULL,
   score INTEGER NOT NULL DEFAULT 0,
   tags TEXT NOT NULL DEFAULT '[]',
-  first_seen TEXT NOT NULL
+  date TEXT NOT NULL
 );`); err != nil {
 		return err
 	}
@@ -70,9 +70,9 @@ WHERE source_id != '';
 
 func ListJobs(ctx context.Context, db *sql.DB) ([]Job, error) {
 	rows, err := db.QueryContext(ctx, `
-SELECT id, company, title, location, work_mode, url, score, tags, first_seen
+SELECT id, company, title, location, work_mode, url, score, tags, date
 FROM jobs
-ORDER BY first_seen DESC
+ORDER BY date DESC
 LIMIT 200;`)
 	if err != nil {
 		return nil, err
@@ -83,12 +83,14 @@ LIMIT 200;`)
 	for rows.Next() {
 		var j Job
 		var tagsJSON string
-		var firstSeenStr string
-		if err := rows.Scan(&j.ID, &j.Company, &j.Title, &j.Location, &j.WorkMode, &j.URL, &j.Score, &tagsJSON, &firstSeenStr); err != nil {
+		var dateStr string
+		var datePrs time.Time
+		if err := rows.Scan(&j.ID, &j.Company, &j.Title, &j.Location, &j.WorkMode, &j.URL, &j.Score, &tagsJSON, &dateStr); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(tagsJSON), &j.Tags)
-		j.FirstSeen, _ = time.Parse(time.RFC3339, firstSeenStr)
+		datePrs, _ = time.Parse(time.RFC3339, dateStr)
+		j.Date = datePrs.Format("2006-01-02 15:04:05")
 		out = append(out, j)
 	}
 	return out, rows.Err()
@@ -96,20 +98,20 @@ LIMIT 200;`)
 
 func SeedJob(ctx context.Context, db *sql.DB) (Job, error) {
 	j := Job{
-		Company:   "SeedCo",
-		Title:     "SRE / Platform Engineer (DFW or Remote)",
-		Location:  "Dallas-Fort Worth, TX",
-		WorkMode:  "remote",
-		URL:       "https://example.com/apply",
-		Score:     88,
-		Tags:      []string{"SRE", "Kubernetes", "Terraform", "AWS", "Go"},
-		FirstSeen: time.Now().UTC(),
+		Company:  "SeedCo",
+		Title:    "SRE / Platform Engineer (DFW or Remote)",
+		Location: "Dallas-Fort Worth, TX",
+		WorkMode: "remote",
+		URL:      "https://example.com/apply",
+		Score:    88,
+		Tags:     []string{"SRE", "Kubernetes", "Terraform", "AWS", "Go"},
+		Date:     time.Now().UTC().Format("2006-01-02 15:04:05"),
 	}
 	tagsB, _ := json.Marshal(j.Tags)
 	res, err := db.ExecContext(ctx, `
-INSERT INTO jobs(company, title, location, work_mode, url, score, tags, first_seen)
+INSERT INTO jobs(company, title, location, work_mode, url, score, tags, date)
 VALUES(?,?,?,?,?,?,?,?);`,
-		j.Company, j.Title, j.Location, j.WorkMode, j.URL, j.Score, string(tagsB), j.FirstSeen.Format(time.RFC3339))
+		j.Company, j.Title, j.Location, j.WorkMode, j.URL, j.Score, string(tagsB), j.Date)
 	if err != nil {
 		return Job{}, err
 	}

@@ -25,7 +25,7 @@ type Job = {
   url: string;
   score: number;
   tags: string[];
-  firstSeen: string;
+  date: string;
 };
 
 export default function App() {
@@ -127,7 +127,7 @@ export default function App() {
                 Apply
               </a>
               <span style={{ marginLeft: 12, fontSize: 12, opacity: 0.75 }}>
-                first seen: {j.firstSeen}
+                Date: {j.date}
               </span>
             </div>
           </div>

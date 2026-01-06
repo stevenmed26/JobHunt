@@ -22,6 +22,8 @@ import (
 	"time"
 
 	"jobhunt-engine/internal/config"
+	"jobhunt-engine/internal/domain"
+	"jobhunt-engine/internal/rank"
 
 	"github.com/emersion/go-imap/v2"
 )
@@ -34,6 +36,8 @@ func RunEmailScrapeOnce(db *sql.DB, cfg config.Config, onNewJob func()) (added i
 		maxLinksPerEmail = 10
 		maxAdds          = 30
 	)
+
+	scorer := rank.YAMLScorer{Cfg: cfg}
 
 	if db == nil {
 		return 0, errors.New("db is nil")
@@ -85,6 +89,8 @@ func RunEmailScrapeOnce(db *sql.DB, cfg config.Config, onNewJob func()) (added i
 
 runLoop:
 	for _, m := range msgs {
+
+		receivedAt := m.Date
 		msgID, bodyText, subj := parseRFC822(m.RawMessage, m.Subject)
 		subj = decodeRFC2047(subj)
 
@@ -140,28 +146,59 @@ runLoop:
 		workMode := inferWorkMode("", subj)
 
 		for _, cu := range cands {
+			// Build description
+			descParts := make([]string, 0, 4)
+
 			// If anchor text exists for this URL, and it looks like a title, use it.
 			if ctxText := contexts[cu]; ctxText != "" {
 				if looksLikeTitle(ctxText) {
 					title = ctxText
 				}
+				descParts = append(descParts, ctxText) // For now use anchor text as description
 			}
+
+			// Subject + sender
+			descParts = append(descParts, subj)
+			descParts = append(descParts, m.From)
+
+			// Small body excerpt
+			if bodyText != "" {
+				descParts = append(descParts, clip(bodyText, 2000))
+			}
+
+			desc := strings.Join(descParts, "\n")
 
 			sid := makeSourceID(msgID, cu, subj, m.From)
 			if sid == "" {
 				continue
 			}
 
+			lead := domain.JobLead{
+				CompanyName:     company,
+				Title:           title,
+				URL:             cu,
+				LocationRaw:     location,
+				WorkMode:        workMode,
+				ATSJobID:        "",
+				ReqID:           "",
+				Description:     desc,
+				PostedAt:        &receivedAt, // This is not really when the job was posted
+				FirstSeenSource: "email",
+			}
+
+			score, tags := scorer.Score(lead)
+
 			j := jobRow{
-				Company:   company,
-				Title:     title,
-				Location:  location,
-				WorkMode:  workMode,
-				URL:       cu,
-				Score:     0,
-				Tags:      []string{},
-				FirstSeen: time.Now().UTC(),
-				SourceID:  sid,
+				Company:     company,
+				Title:       title,
+				Location:    location,
+				WorkMode:    workMode,
+				Description: desc,
+				URL:         cu,
+				Score:       score,
+				Tags:        tags,
+				ReceivedAt:  receivedAt.Local(),
+				SourceID:    sid,
 			}
 
 			ok, ierr := insertJobIfNew(ctx, db, j)
@@ -193,15 +230,16 @@ runLoop:
 }
 
 type jobRow struct {
-	Company   string
-	Title     string
-	Location  string
-	WorkMode  string
-	URL       string
-	Score     int
-	Tags      []string
-	FirstSeen time.Time
-	SourceID  string
+	Company     string
+	Title       string
+	Location    string
+	WorkMode    string
+	Description string
+	URL         string
+	Score       int
+	Tags        []string
+	ReceivedAt  time.Time
+	SourceID    string
 }
 
 func insertJobIfNew(ctx context.Context, db *sql.DB, j jobRow) (bool, error) {
@@ -220,8 +258,8 @@ func insertJobIfNew(ctx context.Context, db *sql.DB, j jobRow) (bool, error) {
 	if j.URL == "" {
 		return false, errors.New("missing url")
 	}
-	if j.FirstSeen.IsZero() {
-		j.FirstSeen = time.Now().UTC()
+	if j.ReceivedAt.IsZero() {
+		j.ReceivedAt = time.Now().UTC()
 	}
 	if j.SourceID == "" {
 		j.SourceID = hashString("url:" + j.URL)
@@ -230,7 +268,7 @@ func insertJobIfNew(ctx context.Context, db *sql.DB, j jobRow) (bool, error) {
 	tagsB, _ := json.Marshal(j.Tags)
 
 	res, err := db.ExecContext(ctx, `
-INSERT OR IGNORE INTO jobs(company, title, location, work_mode, url, score, tags, first_seen, source_id)
+INSERT OR IGNORE INTO jobs(company, title, location, work_mode, url, score, tags, date, source_id)
 VALUES(?,?,?,?,?,?,?,?,?);`,
 		j.Company,
 		j.Title,
@@ -239,7 +277,7 @@ VALUES(?,?,?,?,?,?,?,?,?);`,
 		j.URL,
 		j.Score,
 		string(tagsB),
-		j.FirstSeen.Format(time.RFC3339),
+		j.ReceivedAt.Format(time.RFC3339),
 		j.SourceID,
 	)
 	if err != nil {
@@ -541,4 +579,12 @@ func makeSourceID(messageID, urlStr, subject, from string) string {
 func hashString(s string) string {
 	sum := sha1.Sum([]byte(s))
 	return hex.EncodeToString(sum[:])
+}
+
+func clip(s string, max int) string {
+	s = strings.TrimSpace(s)
+	if max <= 0 || len(s) <= max {
+		return s
+	}
+	return s[:max]
 }

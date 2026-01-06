@@ -15,14 +15,14 @@ type Handlers struct {
 }
 
 type jobRow struct {
-	Company   string
-	Title     string
-	Location  string
-	WorkMode  string
-	URL       string
-	Score     int
-	FirstSeen time.Time
-	Status    string
+	Company    string
+	Title      string
+	Location   string
+	WorkMode   string
+	URL        string
+	Score      int
+	ReceivedAt time.Time
+	Status     string
 }
 
 func (h Handlers) JobsList(w http.ResponseWriter, r *http.Request) {
@@ -42,7 +42,7 @@ func (h Handlers) JobsList(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintln(w, "<html><body><h1>JobHunt</h1><p>(MVP list)</p><hr/>")
 	for rows.Next() {
 		var jr jobRow
-		if err := rows.Scan(&jr.Company, &jr.Title, &jr.Location, &jr.WorkMode, &jr.URL, &jr.Score, &jr.FirstSeen, &jr.Status); err != nil {
+		if err := rows.Scan(&jr.Company, &jr.Title, &jr.Location, &jr.WorkMode, &jr.URL, &jr.Score, &jr.ReceivedAt, &jr.Status); err != nil {
 			http.Error(w, err.Error(), 500)
 			return
 		}
@@ -54,7 +54,7 @@ func (h Handlers) JobsList(w http.ResponseWriter, r *http.Request) {
 			</div><hr/>`,
 			escape(jr.Title), escape(jr.Company),
 			escape(jr.Location), escape(jr.WorkMode), jr.Score,
-			jr.FirstSeen.Format(time.RFC3339), escape(jr.Status),
+			jr.ReceivedAt.Format(time.RFC3339), escape(jr.Status),
 			escapeAttr(jr.URL),
 		)
 	}
