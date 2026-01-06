@@ -43,6 +43,16 @@ type Config struct {
 		KeywordRules   []Rule    `yaml:"keyword_rules" json:"keyword_rules"`
 		Penalties      []Penalty `yaml:"penalties" json:"penalties"`
 	} `yaml:"scoring" json:"scoring"`
+
+	Email struct {
+		Enabled          bool     `yaml:"enabled" json:"enabled"`
+		IMAPHost         string   `yaml:"imap_host" json:"imap_host"`
+		IMAPPort         int      `yaml:"imap_port" json:"imap_port"`
+		Username         string   `yaml:"username" json:"username"`
+		AppPassword      string   `yaml:"app_password" json:"app_password"`
+		Mailbox          string   `yaml:"mailbox" json:"mailbox"`
+		SearchSubjectAny []string `yaml:"search_subject_any" json:"search_subject_any"`
+	} `yaml:"email" json:"email"`
 }
 
 func Load(path string) (Config, error) {

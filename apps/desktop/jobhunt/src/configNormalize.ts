@@ -33,6 +33,7 @@ export function normalizeConfig(raw: any): EngineConfig {
     polling: { email_seconds: 60, fast_lane_seconds: 60, normal_lane_seconds: 300 },
     filters: { remote_ok: true, locations_allow: [], locations_block: [] },
     scoring: { notify_min_score: 0, title_rules: [], keyword_rules: [], penalties: [] },
+    email:  { enabled: true, imap_host: "", imap_port: 993, username: "", app_password: "", mailbox: "", search_subject_any: []}
   };
 
   cfg.app.port = asInt(raw?.app?.port, cfg.app.port);
@@ -42,11 +43,11 @@ export function normalizeConfig(raw: any): EngineConfig {
   cfg.polling.fast_lane_seconds = asInt(raw?.polling?.fast_lane_seconds, cfg.polling.fast_lane_seconds);
   cfg.polling.normal_lane_seconds = asInt(raw?.polling?.normal_lane_seconds, cfg.polling.normal_lane_seconds);
 
-  cfg.filters.remote_ok = !!raw?.filters?.remote_ok;
+  cfg.filters.remote_ok = Boolean(raw?.filters?.remote_ok ?? cfg.filters.remote_ok);
   cfg.filters.locations_allow = asStringArray(raw?.filters?.locations_allow);
   cfg.filters.locations_block = asStringArray(raw?.filters?.locations_block);
 
-  cfg.scoring.notify_min_score = asInt(raw?.scoring?.notify_min_score, 0);
+  cfg.scoring.notify_min_score = asInt(raw?.scoring?.notify_min_score, cfg.scoring.notify_min_score);
 
   const tr = Array.isArray(raw?.scoring?.title_rules) ? raw.scoring.title_rules : [];
   const kr = Array.isArray(raw?.scoring?.keyword_rules) ? raw.scoring.keyword_rules : [];
@@ -55,6 +56,17 @@ export function normalizeConfig(raw: any): EngineConfig {
   cfg.scoring.title_rules = tr.map(normalizeRule);
   cfg.scoring.keyword_rules = kr.map(normalizeRule);
   cfg.scoring.penalties = pe.map(normalizePenalty);
+
+  const em = raw?.email ?? {};
+
+  cfg.email.enabled = Boolean(em.enabled ?? cfg.email.enabled);
+  cfg.email.imap_host = typeof em.imap_host === "string" ? em.imap_host : cfg.email.imap_host;
+  cfg.email.imap_port = asInt(em.imap_port, cfg.email.imap_port);
+  cfg.email.username = typeof em.username === "string" ? em.username : cfg.email.username;
+  cfg.email.app_password = typeof em.app_password === "string" ? em.app_password : cfg.email.app_password;
+  cfg.email.mailbox = typeof em.mailbox === "string" ? em.mailbox : cfg.email.mailbox;
+  cfg.email.search_subject_any = asStringArray(em.search_subject_any);
+
 
   return cfg;
 }

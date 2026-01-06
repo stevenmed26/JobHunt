@@ -4,6 +4,7 @@
   "local": true,
   "windows": ["main"],
   "permissions": [
+    "shell:allow-open",
     "core:default",
     {
       "identifier": "shell:allow-spawn",

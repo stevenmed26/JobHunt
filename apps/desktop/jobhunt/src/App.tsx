@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { events, getJobs, seedJob, deleteJob } from "./api";
 import Preferences from "./Preferences";
+import Scraping from "./Scraping";
 import { Command } from "@tauri-apps/plugin-shell";
 
 async function startEngineDebug() {
@@ -28,7 +29,7 @@ type Job = {
 };
 
 export default function App() {
-  const [view, setView] = useState<"jobs" | "prefs">("jobs");
+  const [view, setView] = useState<"jobs" | "prefs" | "scrape">("jobs");
   const [jobs, setJobs] = useState<Job[]>([]);
   const [err, setErr] = useState<string>("");
 
@@ -59,6 +60,9 @@ export default function App() {
   if (view === "prefs") {
     return <Preferences onBack={() => setView("jobs")} />;
   }
+  if (view === "scrape") {
+    return <Scraping onBack={() => setView("jobs")} />;
+  }
 
   return (
     <div style={{ fontFamily: "system-ui", padding: 16 }}>
@@ -69,6 +73,7 @@ export default function App() {
           Seed fake job
         </button>
         <button onClick={() => setView("prefs")}>Preferences</button>
+        <button onClick={() => setView("scrape")}>Scraping</button>
       </div>
 
       {err && (

@@ -3,12 +3,15 @@ module jobhunt-engine
 go 1.24.0
 
 require (
+	github.com/emersion/go-imap/v2 v2.0.0-beta.7
+	github.com/emersion/go-message v0.18.2
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.42.2
 )
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/emersion/go-sasl v0.0.0-20231106173351-e73c9f7bad43 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect

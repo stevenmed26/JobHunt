@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 
 	"jobhunt-engine/internal/config"
+	"jobhunt-engine/internal/scrape"
 
 	_ "modernc.org/sqlite"
 )
@@ -32,6 +33,14 @@ type Job struct {
 	Score     int       `json:"score"`
 	Tags      []string  `json:"tags"`
 	FirstSeen time.Time `json:"firstSeen"`
+}
+
+type ScrapeStatus struct {
+	LastRunAt string `json:"last_run_at"`
+	LastOkAt  string `json:"last_ok_at"`
+	LastError string `json:"last_error"`
+	LastAdded int    `json:"last_added"`
+	Running   bool   `json:"running"`
 }
 
 type eventHub struct {
@@ -79,11 +88,20 @@ func main() {
 		log.Fatal(err)
 	}
 
+	lockPath := filepath.Join(dataDir, "engine.lock")
+	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if err != nil {
+		log.Fatalf("engine is already running (lock exists): %s", lockPath)
+	}
+	defer func() {
+		lockFile.Close()
+		_ = os.Remove(lockPath)
+	}()
+
 	userCfgPath, err := config.EnsureUserConfig(dataDir)
 	if err != nil {
 		log.Fatalf("config bootstrap failed: %v", err)
 	}
-
 	// Load config and keep it reloadable
 	var cfgVal atomic.Value // stores config.Config
 	loadCfg := func() (config.Config, error) {
@@ -95,6 +113,10 @@ func main() {
 	}
 	cfgVal.Store(cfg)
 
+	// Load scrape status
+	var scrapeStatus atomic.Value // stores ScrapeStatus
+	scrapeStatus.Store(ScrapeStatus{})
+
 	// scorer := func(job domain.JobLead) (int, []string) {
 	// 	c := cfgVal.Load().(config.Config)
 	// 	return rank.YAMLScorer{Cfg: c}.Score(job)
@@ -102,6 +124,18 @@ func main() {
 
 	dbPath := filepath.Join(dataDir, "jobhunt.db")
 	db, err := sql.Open("sqlite", dbPath)
+	if _, err := db.Exec(`PRAGMA journal_mode=WAL;`); err != nil {
+		log.Printf("WARN: set WAL: %v", err)
+	}
+	if _, err := db.Exec(`PRAGMA busy_timeout=5000;`); err != nil {
+		log.Printf("WARN: set busy_timeout: %v", err)
+	}
+	if _, err := db.Exec(`PRAGMA synchronous=NORMAL;`); err != nil {
+		log.Printf("WARN: set synchronous: %v", err)
+	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	db.SetConnMaxLifetime(0)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -112,6 +146,8 @@ func main() {
 	}
 
 	hub := newHub()
+
+	startEmailPoller(db, &cfgVal, &scrapeStatus, hub)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -157,12 +193,35 @@ func main() {
 			writeJSON(w, cur)
 			return
 		case http.MethodPut:
-			var incoming config.Config
+			// Temporary debug block
+			// b, _ := io.ReadAll(r.Body)
+			// log.Printf("PUT /config raw : %s", string(b))
+
 			dec := json.NewDecoder(r.Body)
-			//dec.DisallowUnknownFields()
+			dec.DisallowUnknownFields()
+
+			var incoming config.Config
 			if err := dec.Decode(&incoming); err != nil {
 				http.Error(w, "invalid JSON: "+err.Error(), 400)
 				return
+			}
+			if dec.More() {
+				http.Error(w, "invalid JSON: trailing data", 400)
+				return
+			}
+
+			// log.Printf("decoded incoming app=%+v", incoming.App)
+			// log.Printf("decoded incoming port=%d data_dir=%q", incoming.App.Port, incoming.App.DataDir)
+
+			if incoming.App.Port == 0 {
+				http.Error(w, "invalid config: app.port missing", 400)
+				return
+			}
+			if incoming.Email.Enabled {
+				if incoming.Email.IMAPHost == "" || incoming.Email.Username == "" {
+					http.Error(w, "invalid config: email enabled but missing host/username", 400)
+					return
+				}
 			}
 
 			if err := config.SaveAtomic(userCfgPath, incoming); err != nil {
@@ -170,7 +229,6 @@ func main() {
 				return
 			}
 
-			// Reload from disk
 			saved, err := loadCfg()
 			if err != nil {
 				http.Error(w, "saved but reload failed: "+err.Error(), 500)
@@ -189,6 +247,59 @@ func main() {
 		abs, _ := filepath.Abs(userCfgPath)
 		writeJSON(w, map[string]any{"path": abs})
 	})
+	mux.HandleFunc("/scrape/status", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "GET only", 405)
+			return
+		}
+		st := scrapeStatus.Load().(ScrapeStatus)
+		writeJSON(w, st)
+	})
+
+	mux.HandleFunc("/scrape/run", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "POST only", 405)
+			return
+		}
+
+		// prevent concurrent runs
+		st := scrapeStatus.Load().(ScrapeStatus)
+		if st.Running {
+			writeJSON(w, map[string]any{"ok": false, "msg": "already running"})
+			return
+		}
+
+		// run async so request returns quickly
+		scrapeStatus.Store(ScrapeStatus{
+			LastRunAt: time.Now().Format(time.RFC3339),
+			Running:   true,
+			LastError: "",
+			LastAdded: 0,
+			LastOkAt:  st.LastOkAt,
+		})
+
+		go func() {
+			added, err := scrape.RunEmailScrapeOnce(db, cfgVal.Load().(config.Config), func() {
+				hub.publish(`{"type":"job_created"}`)
+			})
+			now := time.Now().Format(time.RFC3339)
+
+			next := scrapeStatus.Load().(ScrapeStatus)
+			next.Running = false
+			next.LastRunAt = now
+			next.LastAdded = added
+			if err != nil {
+				next.LastError = err.Error()
+			} else {
+				next.LastError = ""
+				next.LastOkAt = now
+			}
+			scrapeStatus.Store(next)
+		}()
+
+		writeJSON(w, map[string]any{"ok": true})
+	})
+
 	mux.HandleFunc("/seed", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "POST only", 405)
@@ -268,7 +379,7 @@ func cors(next http.Handler) http.Handler {
 }
 
 func migrate(db *sql.DB) error {
-	_, err := db.Exec(`
+	if _, err := db.Exec(`
 CREATE TABLE IF NOT EXISTS jobs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   company TEXT NOT NULL,
@@ -279,10 +390,51 @@ CREATE TABLE IF NOT EXISTS jobs (
   score INTEGER NOT NULL DEFAULT 0,
   tags TEXT NOT NULL DEFAULT '[]',
   first_seen TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_jobs_first_seen ON jobs(first_seen DESC);
-`)
-	return err
+);`); err != nil {
+		return err
+	}
+
+	{
+		var has bool
+		rows, err := db.Query(`PRAGMA table_info(jobs);`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var cid int
+			var name, typ string
+			var notnull, pk int
+			var dflt sql.NullString
+			if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
+				return err
+			}
+			if name == "source_id" {
+				has = true
+				break
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+
+		if !has {
+			if _, err := db.Exec(`ALTER TABLE jobs ADD COLUMN source_id TEXT NOT NULL DEFAULT '';`); err != nil {
+				return err
+			}
+		}
+	}
+
+	if _, err := db.Exec(`
+CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_source_id
+ON jobs(source_id)
+WHERE source_id != '';
+`); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func listJobs(ctx context.Context, db *sql.DB) ([]Job, error) {
@@ -344,4 +496,60 @@ func writeJSON(w http.ResponseWriter, v any) {
 func deleteJob(ctx context.Context, db *sql.DB, id int64) error {
 	_, err := db.ExecContext(ctx, `DELETE FROM jobs WHERE id = ?;`, id)
 	return err
+}
+
+func startEmailPoller(db *sql.DB, cfgVal *atomic.Value, scrapeStatus *atomic.Value, hub *eventHub) {
+	go func() {
+		// run forever; interval is read from cfg on each loop so config updates apply live
+		var lastTick time.Time
+
+		for {
+			cfg := cfgVal.Load().(config.Config)
+			sec := cfg.Polling.EmailSeconds
+			if sec <= 0 {
+				sec = 60
+			}
+
+			// sleep until next tick (dynamic interval)
+			if !lastTick.IsZero() {
+				time.Sleep(time.Duration(sec) * time.Second)
+			}
+			lastTick = time.Now()
+
+			if !cfg.Email.Enabled {
+				continue
+			}
+
+			// Prevent concurrent runs (shares the same status guard)
+			st := scrapeStatus.Load().(ScrapeStatus)
+			if st.Running {
+				continue
+			}
+
+			scrapeStatus.Store(ScrapeStatus{
+				LastRunAt: time.Now().Format(time.RFC3339),
+				Running:   true,
+				LastError: "",
+				LastAdded: 0,
+				LastOkAt:  st.LastOkAt,
+			})
+
+			added, err := scrape.RunEmailScrapeOnce(db, cfg, func() {
+				hub.publish(`{"type":"job_created"}`)
+			})
+			now := time.Now().Format(time.RFC3339)
+
+			next := scrapeStatus.Load().(ScrapeStatus)
+			next.Running = false
+			next.LastRunAt = now
+			next.LastAdded = added
+			if err != nil {
+				next.LastError = err.Error()
+			} else {
+				next.LastError = ""
+				next.LastOkAt = now
+			}
+			scrapeStatus.Store(next)
+		}
+	}()
 }

@@ -63,3 +63,17 @@ scoring:
     - reason: "VeryHighYOE"
       weight: -10
       any: ["10+ years", "10 years"]
+
+email:
+  enabled: true
+  imap_host: "imap.gmail.com"
+  imap_port: 993
+  username: "your@gmail.com"
+  app_password: "xxxx xxxx xxxx xxxx"
+  mailbox: "INBOX"
+  search_subject_any:
+    - "Job alert"
+    - "new jobs"
+    - "Indeed"
+    - "LinkedIn"
+
