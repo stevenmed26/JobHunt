@@ -84,9 +84,9 @@ func ListJobs(ctx context.Context, db *sql.DB, opts ListJobsOpts) ([]Job, error)
 	if opts.Window == "" {
 		opts.Window = "7d"
 	}
-	if opts.Limit <= 0 || opts.Limit > 2000 {
-		opts.Limit = 500
-	}
+	// if opts.Limit <= 0 || opts.Limit > 2000 {
+	// 	opts.Limit = 500
+	// }
 
 	// whitelist sort columns (prevents SQL injection)
 	sortCol := map[string]string{

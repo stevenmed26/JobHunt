@@ -172,7 +172,7 @@ func run() error {
 		jobs, err := store.ListJobs(r.Context(), db, store.ListJobsOpts{
 			Sort:   sort,
 			Window: window,
-			Limit:  500,
+			Limit:  50000,
 		})
 		if err != nil {
 			http.Error(w, err.Error(), 500)

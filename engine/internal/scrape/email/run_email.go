@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
+	"log"
+
+	//"sort"
 	"strings"
 	"time"
 
@@ -34,9 +36,9 @@ type jobRow struct {
 // It extracts job-ish URLs and inserts rows into jobs (deduped by source_id), then marks emails \Seen.
 func RunEmailScrapeOnce(db *sql.DB, cfg config.Config, onNewJob func()) (added int, err error) {
 	const (
-		maxEmails        = 30
-		maxLinksPerEmail = 10
-		maxAdds          = 30
+		maxEmails        = 2000
+		maxLinksPerEmail = 200
+		maxAdds          = 1000
 	)
 
 	scorer := rank.YAMLScorer{Cfg: cfg}
@@ -66,7 +68,7 @@ func RunEmailScrapeOnce(db *sql.DB, cfg config.Config, onNewJob func()) (added i
 		mailbox = "INBOX"
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
 	c, err := DialAndLoginIMAP(ctx, addr, cfg.Email.Username, cfg.Email.AppPassword, GmailTLSConfig())
@@ -93,7 +95,7 @@ runLoop:
 	for _, m := range msgs {
 
 		receivedAt := m.Date
-		msgID, bodyText, subj := parseRFC822(m.RawMessage, m.Subject)
+		msgID, bodyText, htmlBody, subj := parseRFC822(m.RawMessage, m.Subject)
 		subj = decodeRFC2047(subj)
 
 		// Require subject match when search_subject_any is set
@@ -102,131 +104,201 @@ runLoop:
 			continue
 		}
 
-		// Extract URLs + anchor contexts
-		rawURLs, contexts := extractLinksFromBody(bodyText)
-		if len(rawURLs) == 0 {
-			processed = append(processed, m.UID)
-			continue
-		}
+		// --- LinkedIn Job Alert special-case
+		if looksLikeLinkedInJobAlert(subj, bodyText) {
 
-		// Canonicalize + lightly filter junk
-		cands := make([]string, 0, len(rawURLs))
-		seen := map[string]struct{}{}
-		for _, u := range rawURLs {
-			cu := canonicalizeURL(u)
-			if cu == "" {
-				continue
+			liJobs, perr := ParseLinkedInJobAlertHTML(htmlBody)
+			log.Printf("[email] LinkedIn parser: found %d jobs, err=%v", len(liJobs), perr)
+			if len(liJobs) > 0 {
+				log.Printf("[email] sample: title=%q company=%q loc=%q url=%q", liJobs[0].Title, liJobs[0].Company, liJobs[0].Location, liJobs[0].URL)
 			}
-			key := strings.ToLower(cu)
-			if _, ok := seen[key]; ok {
-				continue
-			}
-			seen[key] = struct{}{}
-			if isObviousJunkURL(cu) {
-				continue
-			}
-			cands = append(cands, cu)
-		}
-		if len(cands) == 0 {
-			processed = append(processed, m.UID)
-			continue
-		}
+			if perr == nil && len(liJobs) > 0 {
+				for _, lj := range liJobs {
+					desc := strings.Join([]string{
+						subj,
+						m.From,
+						lj.Company + " · " + lj.Location,
+						lj.Salary,
+						lj.URL,
+					}, "\n")
+					sid := lj.SourceID
+					if sid == "" {
+						sid = makeSourceID(msgID, lj.URL, subj, m.From)
+					}
 
-		// Rank URLs so we prefer job postings/apply pages without being too strict.
-		sort.SliceStable(cands, func(i, j int) bool {
-			return scoreURL(cands[i]) > scoreURL(cands[j])
-		})
+					lead := domain.JobLead{
+						CompanyName:     lj.Company,
+						Title:           lj.Title,
+						URL:             lj.URL,
+						LocationRaw:     lj.Location,
+						WorkMode:        inferWorkMode(lj.Location, subj),
+						Description:     desc,
+						PostedAt:        &receivedAt,
+						FirstSeenSource: "email",
+					}
 
-		if len(cands) > maxLinksPerEmail {
-			cands = cands[:maxLinksPerEmail]
-		}
+					score, tags := scorer.Score(lead)
 
-		// Basic “job” fields (we’ll keep parsing lightweight for now)
-		company := guessCompanyFromFrom(m.From)
-		title := normalizeSubjectTitle(subj)
-		location := "unknown"
-		workMode := inferWorkMode("", subj)
+					j := jobRow{
+						Company:    lj.Company,
+						Title:      lj.Title,
+						Location:   lj.Location,
+						WorkMode:   inferWorkMode(lj.Location, subj),
+						URL:        lj.URL,
+						Score:      score,
+						Tags:       tags,
+						ReceivedAt: receivedAt.Local(),
+						SourceID:   sid,
+						// Salary:  lj.Salary,
+						// LogoURL: lj.LogoURL,
+					}
 
-		for _, cu := range cands {
-			// Build description
-			descParts := make([]string, 0, 4)
-
-			// If anchor text exists for this URL, and it looks like a title, use it.
-			if ctxText := contexts[cu]; ctxText != "" {
-				if looksLikeTitle(ctxText) {
-					title = ctxText
+					ok, ierr := insertJobIfNew(ctx, db, j)
+					if ierr != nil {
+						continue
+					}
+					if ok {
+						added++
+						if onNewJob != nil {
+							onNewJob()
+						}
+						if added >= maxAdds {
+							processed = append(processed, m.UID)
+							break runLoop
+						}
+					}
 				}
-				descParts = append(descParts, ctxText) // For now use anchor text as description
-			}
 
-			// Subject + sender
-			descParts = append(descParts, subj)
-			descParts = append(descParts, m.From)
-
-			// Small body excerpt
-			if bodyText != "" {
-				descParts = append(descParts, clip(bodyText, 2000))
-			}
-
-			desc := strings.Join(descParts, "\n")
-
-			sid := makeSourceID(msgID, cu, subj, m.From)
-			if sid == "" {
+				processed = append(processed, m.UID)
 				continue
-			}
-
-			lead := domain.JobLead{
-				CompanyName:     company,
-				Title:           title,
-				URL:             cu,
-				LocationRaw:     location,
-				WorkMode:        workMode,
-				ATSJobID:        "",
-				ReqID:           "",
-				Description:     desc,
-				PostedAt:        &receivedAt, // This is not really when the job was posted
-				FirstSeenSource: "email",
-			}
-
-			score, tags := scorer.Score(lead)
-
-			j := jobRow{
-				Company:     company,
-				Title:       title,
-				Location:    location,
-				WorkMode:    workMode,
-				Description: desc,
-				URL:         cu,
-				Score:       score,
-				Tags:        tags,
-				ReceivedAt:  receivedAt.Local(),
-				SourceID:    sid,
-			}
-
-			ok, ierr := insertJobIfNew(ctx, db, j)
-			if ierr != nil {
-				continue
-			}
-			if ok {
-				added++
-				if onNewJob != nil {
-					onNewJob()
-				}
-				if added >= maxAdds {
-					processed = append(processed, m.UID)
-					break runLoop
-				}
 			}
 		}
+
+		// // Extract URLs + anchor contexts
+		// rawURLs, contexts := extractLinksFromBody(bodyText)
+		// if len(rawURLs) == 0 {
+		// 	processed = append(processed, m.UID)
+		// 	continue
+		// }
+
+		// // Canonicalize + lightly filter junk
+		// cands := make([]string, 0, len(rawURLs))
+		// seen := map[string]struct{}{}
+		// for _, u := range rawURLs {
+		// 	cu := canonicalizeURL(u)
+		// 	if cu == "" {
+		// 		continue
+		// 	}
+		// 	key := strings.ToLower(cu)
+		// 	if _, ok := seen[key]; ok {
+		// 		continue
+		// 	}
+		// 	seen[key] = struct{}{}
+		// 	if isObviousJunkURL(cu) {
+		// 		continue
+		// 	}
+		// 	cands = append(cands, cu)
+		// }
+		// if len(cands) == 0 {
+		// 	processed = append(processed, m.UID)
+		// 	continue
+		// }
+
+		// // Rank URLs so we prefer job postings/apply pages without being too strict.
+		// sort.SliceStable(cands, func(i, j int) bool {
+		// 	return scoreURL(cands[i]) > scoreURL(cands[j])
+		// })
+
+		// if len(cands) > maxLinksPerEmail {
+		// 	cands = cands[:maxLinksPerEmail]
+		// }
+
+		// // Basic “job” fields (we’ll keep parsing lightweight for now)
+		// company := guessCompanyFromFrom(m.From)
+		// title := normalizeSubjectTitle(subj)
+		// location := "unknown"
+		// workMode := inferWorkMode("", subj)
+
+		// for _, cu := range cands {
+		// 	// Build description
+		// 	descParts := make([]string, 0, 4)
+
+		// 	// If anchor text exists for this URL, and it looks like a title, use it.
+		// 	if ctxText := contexts[cu]; ctxText != "" {
+		// 		if looksLikeTitle(ctxText) {
+		// 			title = ctxText
+		// 		}
+		// 		descParts = append(descParts, ctxText) // For now use anchor text as description
+		// 	}
+
+		// 	// Subject + sender
+		// 	descParts = append(descParts, subj)
+		// 	descParts = append(descParts, m.From)
+
+		// 	// Small body excerpt
+		// 	if bodyText != "" {
+		// 		descParts = append(descParts, clip(bodyText, 2000))
+		// 	}
+
+		// 	desc := strings.Join(descParts, "\n")
+
+		// 	sid := makeSourceID(msgID, cu, subj, m.From)
+		// 	if sid == "" {
+		// 		continue
+		// 	}
+
+		// 	lead := domain.JobLead{
+		// 		CompanyName:     company,
+		// 		Title:           title,
+		// 		URL:             cu,
+		// 		LocationRaw:     location,
+		// 		WorkMode:        workMode,
+		// 		ATSJobID:        "",
+		// 		ReqID:           "",
+		// 		Description:     desc,
+		// 		PostedAt:        &receivedAt, // This is not really when the job was posted
+		// 		FirstSeenSource: "email",
+		// 	}
+
+		// 	score, tags := scorer.Score(lead)
+
+		// 	j := jobRow{
+		// 		Company:     company,
+		// 		Title:       title,
+		// 		Location:    location,
+		// 		WorkMode:    workMode,
+		// 		Description: desc,
+		// 		URL:         cu,
+		// 		Score:       score,
+		// 		Tags:        tags,
+		// 		ReceivedAt:  receivedAt.Local(),
+		// 		SourceID:    sid,
+		// 	}
+
+		// 	ok, ierr := insertJobIfNew(ctx, db, j)
+		// 	if ierr != nil {
+		// 		continue
+		// 	}
+		// 	if ok {
+		// 		added++
+		// 		if onNewJob != nil {
+		// 			onNewJob()
+		// 		}
+		// 		if added >= maxAdds {
+		// 			processed = append(processed, m.UID)
+		// 			break runLoop
+		// 		}
+		// 	}
+		// }
 
 		processed = append(processed, m.UID)
 	}
 
-	// if len(processed) > 0 {
-	// 	if err := MarkSeen(c, processed); err != nil {
-	// 		return added, fmt.Errorf("mark seen: %w", err)
-	// 	}
-	// }
+	if len(processed) > 0 {
+		if err := MarkSeen(c, processed); err != nil {
+			return added, fmt.Errorf("mark seen: %w", err)
+		}
+	}
 
 	return added, nil
 }

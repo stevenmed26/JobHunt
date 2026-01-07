@@ -96,7 +96,7 @@ func isObviousJunkURL(u string) bool {
 		"tracking",
 		"pixel",
 		"beacon",
-		"/alerts",
+		//"/alerts",
 		"/settings",
 		"/help",
 		"/legal",

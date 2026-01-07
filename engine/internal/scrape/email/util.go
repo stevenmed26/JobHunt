@@ -61,14 +61,15 @@ func extractLinksFromBody(body string) (urls []string, contexts map[string]strin
 	return urls, contexts
 }
 
-func parseRFC822(raw []byte, fallbackSubject string) (messageID, bodyText, subject string) {
+func parseRFC822(raw []byte, fallbackSubject string) (messageID, bodyText, htmlBody, subject string) {
 	if len(raw) == 0 {
-		return "", "", fallbackSubject
+		return "", "", "", fallbackSubject
 	}
 
 	msg, err := mail.ReadMessage(bytes.NewReader(raw))
 	if err != nil {
-		return "", string(raw), fallbackSubject
+		// If parsing fails, treat raw as plaintext best-effort
+		return "", string(raw), "", fallbackSubject
 	}
 
 	messageID = strings.TrimSpace(msg.Header.Get("Message-Id"))
@@ -81,18 +82,19 @@ func parseRFC822(raw []byte, fallbackSubject string) (messageID, bodyText, subje
 		subject = fallbackSubject
 	}
 
-	bodyRaw, _ := io.ReadAll(io.LimitReader(msg.Body, 6<<20)) // 6MB cap
+	bodyRaw, _ := io.ReadAll(io.LimitReader(msg.Body, 25<<20)) // 6MB cap
+
 	plain, htmlPart := extractMIMETextParts(msg.Header, bodyRaw)
 
-	if htmlPart != "" {
-		bodyText = htmlPart + "\n" + plain
-	} else {
-		bodyText = plain
-	}
-	if bodyText == "" {
+	bodyText = plain
+	htmlBody = htmlPart
+
+	// Fallbacks if MIME parsing didn't find anything
+	if bodyText == "" && htmlBody == "" {
 		bodyText = string(bodyRaw)
 	}
-	return messageID, bodyText, subject
+
+	return messageID, bodyText, htmlBody, subject
 }
 
 func extractMIMETextParts(h mail.Header, body []byte) (plain, htmlPart string) {
@@ -125,7 +127,7 @@ func extractMIMETextParts(h mail.Header, body []byte) (plain, htmlPart string) {
 			pMedia, _, _ := mime.ParseMediaType(partCT)
 			pMedia = strings.ToLower(pMedia)
 
-			b, _ := io.ReadAll(io.LimitReader(p, 4<<20))
+			b, _ := io.ReadAll(io.LimitReader(p, 20<<20))
 			b = decodeTransferEncoding(b, partCTE)
 
 			if strings.HasPrefix(pMedia, "multipart/") {
