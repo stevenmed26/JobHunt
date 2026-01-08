@@ -159,12 +159,16 @@ func run() error {
 	if err := store.Migrate(db); err != nil {
 		return fmt.Errorf("%s", err)
 	}
+	if _, err := store.CleanupOldJobs(db); err != nil {
+		log.Printf("[retention] cleanup failed: %v", err)
+	}
 
 	hub := newHub()
 
 	startEmailPoller(db, &cfgVal, &scrapeStatus, hub)
 
 	mux := http.NewServeMux()
+
 	mux.HandleFunc("/jobs", func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 

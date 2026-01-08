@@ -93,8 +93,12 @@ func FetchUnseen(ctx context.Context, c *imapclient.Client, max int) ([]EmailMes
 		max = 50
 	}
 
+	// 3-month cutoff (emails older than this won't even be considered)
+	cutoff := time.Now().AddDate(0, -3, 0)
+
 	criteria := &imap.SearchCriteria{
 		NotFlag: []imap.Flag{imap.FlagSeen},
+		Since:   cutoff, // <-- IMPORTANT
 	}
 
 	searchData, err := c.UIDSearch(criteria, nil).Wait()
@@ -120,8 +124,8 @@ func FetchUnseen(ctx context.Context, c *imapclient.Client, max int) ([]EmailMes
 	uidSet := imap.UIDSetNum(uids...)
 
 	bodyAll := &imap.FetchItemBodySection{
-		Specifier: imap.PartSpecifierNone, // BODY[]
-		Peek:      true,                   // BODY.PEEK[]
+		Specifier: imap.PartSpecifierNone,
+		Peek:      true,
 	}
 
 	fetchOptions := &imap.FetchOptions{
@@ -163,12 +167,10 @@ func FetchUnseen(ctx context.Context, c *imapclient.Client, max int) ([]EmailMes
 			em.To = joinAddrs(buf.Envelope.To)
 		}
 
-		// FindBodySection returns []byte (not a struct with .Bytes)
 		if b := buf.FindBodySection(bodyAll); b != nil {
 			em.RawMessage = append([]byte(nil), b...)
 		}
 
-		// Fallback parse from raw headers if envelope fields are missing.
 		if (em.Subject == "" || em.From == "" || em.To == "" || em.Date.IsZero()) && len(em.RawMessage) > 0 {
 			subj, from, to, date := parseHeadersFallback(em.RawMessage)
 			if em.Subject == "" {
@@ -188,7 +190,6 @@ func FetchUnseen(ctx context.Context, c *imapclient.Client, max int) ([]EmailMes
 		out = append(out, em)
 	}
 
-	// Command-level error is returned by Close().
 	if err := fetchCmd.Close(); err != nil {
 		return nil, fmt.Errorf("imap fetch close: %w", err)
 	}

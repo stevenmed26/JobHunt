@@ -124,6 +124,12 @@ LIMIT 1;
 			return err
 		}
 	}
+	if _, err := db.Exec(`
+CREATE INDEX IF NOT EXISTS idx_jobs_date
+ON jobs(date);
+`); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -248,4 +254,16 @@ VALUES(?,?,?,?,?,?,?,?);`,
 	}
 	j.ID, _ = res.LastInsertId()
 	return j, nil
+}
+
+func CleanupOldJobs(db *sql.DB) (deleted int64, err error) {
+	res, err := db.Exec(`
+DELETE FROM jobs
+WHERE date < datetime('now', '-3 months');
+`)
+	if err != nil {
+		return 0, fmt.Errorf("cleanup old jobs: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
 }
