@@ -1,4 +1,4 @@
-package email_scrape
+package scrape
 
 import (
 	"net/url"

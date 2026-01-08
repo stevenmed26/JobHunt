@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 
 	"jobhunt-engine/internal/config"
+	"jobhunt-engine/internal/scrape"
 	email_scrape "jobhunt-engine/internal/scrape/email"
 	"jobhunt-engine/internal/store"
 
@@ -307,6 +308,13 @@ func run() error {
 			added, err := email_scrape.RunEmailScrapeOnce(db, cfgVal.Load().(config.Config), func() {
 				hub.publish(`{"type":"job_created"}`)
 			})
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			defer cancel()
+
+			addedATS, err := scrape.RunATSScrapeOnce(ctx, db, cfgVal.Load().(config.Config))
+
+			added += addedATS
+
 			now := time.Now().Format(time.RFC3339)
 
 			next := scrapeStatus.Load().(ScrapeStatus)

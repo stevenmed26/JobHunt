@@ -19,6 +19,16 @@ type Penalty struct {
 	Any    []string `yaml:"any" json:"any"`
 }
 
+type ATSCompany struct {
+	Slug string `yaml:"slug" json:"slug"`
+	Name string `yaml:"name,omitempty" json:"name,omitempty"`
+}
+
+type ATSSource struct {
+	Enabled   bool         `yaml:"enabled" json:"enabled"`
+	Companies []ATSCompany `yaml:"companies" json:"companies"`
+}
+
 type Config struct {
 	App struct {
 		Port    int    `yaml:"port" json:"port"`
@@ -53,6 +63,11 @@ type Config struct {
 		Mailbox          string   `yaml:"mailbox" json:"mailbox"`
 		SearchSubjectAny []string `yaml:"search_subject_any" json:"search_subject_any"`
 	} `yaml:"email" json:"email"`
+
+	Sources struct {
+		Greenhouse ATSSource `yaml:"greenhouse" json:"greenhouse"`
+		Lever      ATSSource `yaml:"lever" json:"lever"`
+	} `yaml:"sources" json:"sources"`
 }
 
 func Load(path string) (Config, error) {

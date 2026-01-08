@@ -1,4 +1,4 @@
-package email_scrape
+package scrape
 
 import (
 	"bytes"
@@ -23,7 +23,7 @@ var (
 	reURL  = regexp.MustCompile(`https?://[^\s<>"']+`)
 )
 
-func extractLinksFromBody(body string) (urls []string, contexts map[string]string) {
+func ExtractLinksFromBody(body string) (urls []string, contexts map[string]string) {
 	contexts = make(map[string]string)
 
 	lower := strings.ToLower(body)
@@ -61,7 +61,7 @@ func extractLinksFromBody(body string) (urls []string, contexts map[string]strin
 	return urls, contexts
 }
 
-func parseRFC822(raw []byte, fallbackSubject string) (messageID, bodyText, htmlBody, subject string) {
+func ParseRFC822(raw []byte, fallbackSubject string) (messageID, bodyText, htmlBody, subject string) {
 	if len(raw) == 0 {
 		return "", "", "", fallbackSubject
 	}
@@ -177,7 +177,7 @@ func decodeTransferEncoding(b []byte, cte string) []byte {
 	}
 }
 
-func decodeRFC2047(s string) string {
+func DecodeRFC2047(s string) string {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return s
@@ -211,7 +211,7 @@ func clip(s string, max int) string {
 
 // ---------------- Matching / heuristics ----------------
 
-func containsAnyCI(s string, any []string) bool {
+func ContainsAnyCI(s string, any []string) bool {
 	ls := strings.ToLower(s)
 	for _, a := range any {
 		a = strings.TrimSpace(a)
@@ -227,7 +227,7 @@ func containsAnyCI(s string, any []string) bool {
 
 // ---------------- Dedupe / URL canonicalization ----------------
 
-func makeSourceID(messageID, urlStr, subject, from string) string {
+func MakeSourceID(messageID, urlStr, subject, from string) string {
 	nurl := canonicalizeURL(urlStr)
 	if nurl == "" {
 		return ""

@@ -17,6 +17,29 @@ function fmt(ts?: string) {
   }
 }
 
+// --- ATS helpers: textarea <-> companies list (minimal, inline-style friendly)
+type SourceCompany = { slug: string; name?: string };
+
+function companiesToText(list: SourceCompany[] | undefined): string {
+  return (list ?? [])
+    .map((c) => (c?.name ? `${c.slug} | ${c.name}` : c.slug))
+    .join("\n");
+}
+
+function textToCompanies(text: string): SourceCompany[] {
+  return (text ?? "")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const parts = line.split("|").map((p) => p.trim()).filter(Boolean);
+      if (parts.length === 0) return null;
+      if (parts.length === 1) return { slug: parts[0] };
+      return { slug: parts[0], name: parts.slice(1).join(" | ") };
+    })
+    .filter((x): x is SourceCompany => !!x && !!x.slug);
+}
+
 export default function Scraping({ onBack }: { onBack: () => void }) {
   const [cfg, setCfg] = useState<EngineConfig | null>(null);
   const [st, setSt] = useState<ScrapeStatus | null>(null);
@@ -25,6 +48,10 @@ export default function Scraping({ onBack }: { onBack: () => void }) {
   const [saving, setSaving] = useState(false);
   const [showPw, setShowPw] = useState(false);
   const [runningNow, setRunningNow] = useState(false);
+
+  // local textareas for ATS company lists (keeps typing smooth)
+  const [ghText, setGhText] = useState("");
+  const [leverText, setLeverText] = useState("");
 
   async function refreshStatus() {
     try {
@@ -41,7 +68,13 @@ export default function Scraping({ onBack }: { onBack: () => void }) {
     (async () => {
       try {
         setErr("");
-        setCfg(normalizeConfig(await getConfig()));
+        const c = normalizeConfig(await getConfig());
+        setCfg(c);
+
+        // initialize textarea content from config once loaded
+        const s = (c as any).sources;
+        setGhText(companiesToText(s?.greenhouse?.companies));
+        setLeverText(companiesToText(s?.lever?.companies));
       } catch (e: any) {
         setErr(String(e?.message ?? e));
       }
@@ -61,8 +94,23 @@ export default function Scraping({ onBack }: { onBack: () => void }) {
     try {
       setSaving(true);
       setErr("");
-      const saved = await putConfig(cfg);
-      setCfg(normalizeConfig(saved));
+
+      // Before save: sync textarea -> cfg.sources (minimal mutation)
+      const c = cloneCfg(cfg) as any;
+      c.sources = c.sources ?? {};
+      c.sources.greenhouse = c.sources.greenhouse ?? { enabled: false, companies: [] };
+      c.sources.lever = c.sources.lever ?? { enabled: false, companies: [] };
+      c.sources.greenhouse.companies = textToCompanies(ghText);
+      c.sources.lever.companies = textToCompanies(leverText);
+
+      const saved = await putConfig(c);
+      const norm = normalizeConfig(saved);
+      setCfg(norm);
+
+      // re-sync textareas from saved config (so formatting stays canonical)
+      const s = (norm as any).sources;
+      setGhText(companiesToText(s?.greenhouse?.companies));
+      setLeverText(companiesToText(s?.lever?.companies));
     } catch (e: any) {
       setErr(String(e?.message ?? e));
     } finally {
@@ -88,6 +136,7 @@ export default function Scraping({ onBack }: { onBack: () => void }) {
   }
 
   const email = useMemo(() => cfg?.email, [cfg]);
+  const sources = useMemo(() => (cfg as any)?.sources, [cfg]);
 
   return (
     <div style={{ fontFamily: "system-ui", padding: 16, maxWidth: 1000 }}>
@@ -267,8 +316,108 @@ export default function Scraping({ onBack }: { onBack: () => void }) {
           </>
         )}
       </div>
+
+      {/* ATS Sources (Greenhouse / Lever) */}
+      <div style={{ marginTop: 16, border: "1px solid #ddd", borderRadius: 10, padding: 12 }}>
+        <div style={{ fontWeight: 700 }}>ATS Sources</div>
+        <div style={{ marginTop: 6, opacity: 0.75, fontSize: 12 }}>
+          One per line: <code>slug</code> or <code>slug | Display Name</code>
+        </div>
+
+        {!cfg ? (
+          <div style={{ marginTop: 8, opacity: 0.7 }}>Loading config…</div>
+        ) : (
+          <>
+            {/* Greenhouse */}
+            <div style={{ marginTop: 12 }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <div style={{ fontWeight: 600 }}>Greenhouse</div>
+                <div style={{ flex: 1 }} />
+                <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <input
+                    type="checkbox"
+                    checked={!!sources?.greenhouse?.enabled}
+                    onChange={(e) => {
+                      const c = cloneCfg(cfg) as any;
+                      c.sources = c.sources ?? {};
+                      c.sources.greenhouse = c.sources.greenhouse ?? { enabled: false, companies: [] };
+                      c.sources.greenhouse.enabled = e.target.checked;
+                      setCfg(c);
+                    }}
+                  />
+                  Enabled
+                </label>
+              </div>
+
+              <div style={{ marginTop: 6, opacity: 0.75, fontSize: 12 }}>
+                Example: <code>boards.greenhouse.io/stripe</code> → slug <code>stripe</code>
+              </div>
+
+              <textarea
+                value={ghText}
+                onChange={(e) => setGhText(e.target.value)}
+                placeholder={"stripe | Stripe\ncoinbase | Coinbase"}
+                style={{
+                  width: "100%",
+                  marginTop: 8,
+                  minHeight: 88,
+                  border: "1px solid #ccc",
+                  borderRadius: 10,
+                  padding: 10,
+                  fontSize: 12,
+                  fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                }}
+              />
+            </div>
+
+            {/* Lever */}
+            <div style={{ marginTop: 14 }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <div style={{ fontWeight: 600 }}>Lever</div>
+                <div style={{ flex: 1 }} />
+                <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <input
+                    type="checkbox"
+                    checked={!!sources?.lever?.enabled}
+                    onChange={(e) => {
+                      const c = cloneCfg(cfg) as any;
+                      c.sources = c.sources ?? {};
+                      c.sources.lever = c.sources.lever ?? { enabled: false, companies: [] };
+                      c.sources.lever.enabled = e.target.checked;
+                      setCfg(c);
+                    }}
+                  />
+                  Enabled
+                </label>
+              </div>
+
+              <div style={{ marginTop: 6, opacity: 0.75, fontSize: 12 }}>
+                Example: <code>jobs.lever.co/airtable</code> → slug <code>airtable</code>
+              </div>
+
+              <textarea
+                value={leverText}
+                onChange={(e) => setLeverText(e.target.value)}
+                placeholder={"airtable | Airtable\nzapier | Zapier"}
+                style={{
+                  width: "100%",
+                  marginTop: 8,
+                  minHeight: 88,
+                  border: "1px solid #ccc",
+                  borderRadius: 10,
+                  padding: 10,
+                  fontSize: 12,
+                  fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                }}
+              />
+            </div>
+
+            <div style={{ marginTop: 10, opacity: 0.75, fontSize: 12 }}>
+              Note: company lists are saved when you click <b>Save email settings</b> (we’ll rename this later).
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }
-
-

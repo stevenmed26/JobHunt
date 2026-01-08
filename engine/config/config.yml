@@ -80,3 +80,19 @@ email:
     - "Software"
     - "Developer"
 
+sources:
+  greenhouse:
+    enabled: false
+    companies: []
+    # companies:
+    #   - slug: "stripe"
+    #     name: "Stripe"
+
+  lever:
+    enabled: false
+    companies: []
+    # companies:
+    #   - slug: "airtable"
+    #     name: "Airtable"
+
+

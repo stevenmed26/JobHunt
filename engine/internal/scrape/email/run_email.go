@@ -3,7 +3,6 @@ package email_scrape
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -16,24 +15,11 @@ import (
 	"jobhunt-engine/internal/config"
 	"jobhunt-engine/internal/domain"
 	"jobhunt-engine/internal/rank"
+	"jobhunt-engine/internal/scrape"
 	"jobhunt-engine/internal/store"
 
 	"github.com/emersion/go-imap/v2"
 )
-
-type jobRow struct {
-	Company        string
-	Title          string
-	Location       string
-	WorkMode       string
-	Description    string
-	URL            string
-	Score          int
-	Tags           []string
-	ReceivedAt     time.Time
-	SourceID       string
-	CompanyLogoURL string
-}
 
 // RunEmailScrapeOnce scans UNSEEN emails, but ONLY those whose subject matches cfg.Email.SearchSubjectAny.
 // It extracts job-ish URLs and inserts rows into jobs (deduped by source_id), then marks emails \Seen.
@@ -98,11 +84,11 @@ runLoop:
 	for _, m := range msgs {
 		//log.Printf("[email] Email found with subj: %s", m.Subject)
 		receivedAt := m.Date
-		msgID, bodyText, htmlBody, subj := parseRFC822(m.RawMessage, m.Subject)
-		subj = decodeRFC2047(subj)
+		msgID, bodyText, htmlBody, subj := scrape.ParseRFC822(m.RawMessage, m.Subject)
+		subj = scrape.DecodeRFC2047(subj)
 
 		// Require subject match when search_subject_any is set
-		if len(cfg.Email.SearchSubjectAny) > 0 && !containsAnyCI(subj, cfg.Email.SearchSubjectAny) {
+		if len(cfg.Email.SearchSubjectAny) > 0 && !scrape.ContainsAnyCI(subj, cfg.Email.SearchSubjectAny) {
 			processed = append(processed, m.UID)
 			continue
 		}
@@ -126,7 +112,7 @@ runLoop:
 					}, "\n")
 					sid := lj.SourceID
 					if sid == "" {
-						sid = makeSourceID(msgID, lj.URL, subj, m.From)
+						sid = scrape.MakeSourceID(msgID, lj.URL, subj, m.From)
 					}
 
 					lead := domain.JobLead{
@@ -142,7 +128,7 @@ runLoop:
 
 					score, tags := scorer.Score(lead)
 
-					j := jobRow{
+					j := scrape.JobRow{
 						Company:        lj.Company,
 						Title:          lj.Title,
 						Location:       lj.Location,
@@ -170,8 +156,13 @@ runLoop:
 					}
 
 					// log.Printf("Job ready: %v", j)
-
-					ok, ierr := insertJobIfNew(ctx, db, j)
+					keep, why := scrape.ShouldKeepJob(cfg, lead)
+					if !keep {
+						log.Printf("[email:%s] skipped (%s) title=%q loc=%q url=%q",
+							lead.CompanyName, why, lead.Title, lead.LocationRaw, lead.URL)
+						continue
+					}
+					ok, ierr := scrape.InsertJobIfNew(ctx, db, j)
 					if ierr != nil {
 						continue
 					}
@@ -202,64 +193,6 @@ runLoop:
 	}
 
 	return added, nil
-}
-
-func insertJobIfNew(ctx context.Context, db *sql.DB, j jobRow) (bool, error) {
-	if j.Company == "" {
-		j.Company = "Unknown"
-	}
-	if j.Title == "" {
-		j.Title = "Job Posting"
-	}
-	if j.Location == "" {
-		j.Location = "unknown"
-	}
-	if j.WorkMode == "" {
-		j.WorkMode = "unknown"
-	}
-	if j.URL == "" {
-		return false, errors.New("missing url")
-	}
-	if j.ReceivedAt.IsZero() {
-		j.ReceivedAt = time.Now().UTC()
-	}
-	if j.SourceID == "" {
-		j.SourceID = hashString("url:" + j.URL)
-	}
-
-	tagsB, _ := json.Marshal(j.Tags)
-
-	res, err := db.ExecContext(ctx, `
-INSERT OR IGNORE INTO jobs(company, title, location, work_mode, url, score, tags, date, source_id, logo_key)
-VALUES(?,?,?,?,?,?,?,?,?,?);`,
-		j.Company,
-		j.Title,
-		j.Location,
-		j.WorkMode,
-		j.URL,
-		j.Score,
-		string(tagsB),
-		j.ReceivedAt.Format(time.RFC3339),
-		j.SourceID,
-		j.CompanyLogoURL,
-	)
-	if err != nil {
-		return false, err
-	}
-	n, _ := res.RowsAffected()
-	if n == 0 && j.CompanyLogoURL != "" {
-		// job already existed; backfill logo_key if missing
-		_, _ = db.ExecContext(ctx, `
-UPDATE jobs
-SET logo_key = ?
-WHERE source_id = ?
-  AND (logo_key = '' OR logo_key IS NULL);`,
-			j.CompanyLogoURL, j.SourceID,
-		)
-	}
-
-	//log.Println("New job added to DB")
-	return n > 0, nil
 }
 
 func inferWorkMode(location string, subject string) string {

@@ -57,6 +57,8 @@ export type EngineConfig = {
     penalties: Penalty[];
   };
   email: EngineEmailConfig;
+
+  sources: EngineSourcesConfig;
 };
 
 export async function getConfig(): Promise<EngineConfig> {
@@ -112,5 +114,15 @@ export type EngineEmailConfig = {
   mailbox: string;
   search_subject_any: string[];
 };
+
+export type SourceCompany = {
+  slug: string;
+  name?: string;
+};
+
+export type EngineSourcesConfig = {
+  greenhouse: { enabled: boolean; companies: SourceCompany[] };
+  lever: { enabled: boolean; companies: SourceCompany[] };
+}
 
 
