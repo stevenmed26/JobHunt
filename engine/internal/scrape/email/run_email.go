@@ -106,11 +106,11 @@ runLoop:
 			processed = append(processed, m.UID)
 			continue
 		}
-		log.Printf("[email] Email contains search params: %s", m.Subject)
+		//log.Printf("[email] Email contains search params: %s", m.Subject)
 
 		// --- LinkedIn Job Alert special-case
 		if looksLikeLinkedInJobAlert(m.From, subj, bodyText) {
-			log.Printf("[email] Email Looks like LinkedIn: %s", m.Subject)
+			//log.Printf("[email] Email Looks like LinkedIn: %s", m.Subject)
 
 			liJobs, perr := ParseLinkedInJobAlertHTML(htmlBody)
 			//log.Printf("[email] LinkedIn parser: found %d jobs, err=%v", len(liJobs), perr)
@@ -262,16 +262,17 @@ WHERE source_id = ?
 	return n > 0, nil
 }
 
-func inferWorkMode(_ string, subject string) string {
+func inferWorkMode(location string, subject string) string {
 	s := strings.ToLower(subject)
+	l := strings.ToLower(location)
 	switch {
-	case strings.Contains(s, "remote"):
-		return "remote"
-	case strings.Contains(s, "hybrid"):
-		return "hybrid"
-	case strings.Contains(s, "on-site") || strings.Contains(s, "onsite") || strings.Contains(s, "on site"):
-		return "onsite"
+	case strings.Contains(s, "remote") || strings.Contains(l, "remote"):
+		return "Remote"
+	case strings.Contains(s, "hybrid") || strings.Contains(l, "hybrid"):
+		return "Hybrid"
+	case strings.Contains(s, "on-site") || strings.Contains(s, "onsite") || strings.Contains(s, "on site") || strings.Contains(l, "on-site") || strings.Contains(l, "onsite") || strings.Contains(l, "on site"):
+		return "Onsite"
 	default:
-		return "unknown"
+		return "Unknown"
 	}
 }

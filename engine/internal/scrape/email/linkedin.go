@@ -197,25 +197,26 @@ func stripBadTitleSuffixes(s string) string {
 }
 
 func betterTitle(candidate, current string) bool {
-	candidate = strings.TrimSpace(candidate)
-	if candidate == "" {
+	c := strings.TrimSpace(candidate)
+	if c == "" {
 		return false
 	}
-	// prefer a “real” title length
-	cl := len(candidate)
-	if cl < 4 || cl > 120 {
+	cur := strings.TrimSpace(current)
+
+	// If current empty, accept any plausible title-like string
+	if cur == "" {
+		return titleScore(c) >= 5
+	}
+
+	cs := titleScore(c)
+	ks := titleScore(cur)
+
+	if titleScore(current) >= 8 && titleScore(candidate) < titleScore(current) {
 		return false
 	}
-	// prefer candidate if current empty
-	if strings.TrimSpace(current) == "" {
-		return true
-	}
-	// if current is very long (usually concatenated garbage) and candidate is shorter, take candidate
-	if len(current) > 80 && cl < len(current) {
-		return true
-	}
-	// otherwise keep current unless candidate looks more “title-like” (shorter is usually better)
-	return cl < len(current)
+
+	// Only replace if candidate is meaningfully better (avoid flip-flopping)
+	return cs >= ks+3
 }
 
 func extractLinkedInTitle(a, container *goquery.Selection) string {
@@ -312,6 +313,134 @@ func looksLikeLinkedInJobAlert(from, subj, body string) bool {
 		b := strings.ToLower(body)
 		return strings.Contains(b, "linkedin.com/comm/jobs/view") ||
 			strings.Contains(b, "linkedin.com/jobs/view")
+	}
+	return false
+}
+
+func titleScore(s string) int {
+	orig := strings.TrimSpace(s)
+	if orig == "" {
+		return -100
+	}
+
+	l := strings.ToLower(orig)
+	score := 0
+
+	// Hard rejects / strong negatives
+	if strings.Contains(l, "unsubscribe") || strings.Contains(l, "manage") && strings.Contains(l, "alert") {
+		return -50
+	}
+	if strings.Contains(l, "http://") || strings.Contains(l, "https://") || strings.Contains(l, "www.") {
+		return -30
+	}
+
+	// Salary-ish
+	if strings.ContainsAny(orig, "$€£") {
+		score -= 8
+	}
+	if strings.Contains(l, "per hour") || strings.Contains(l, "/hour") || strings.Contains(l, "/hr") ||
+		strings.Contains(l, "per year") || strings.Contains(l, "/year") || strings.Contains(l, "/yr") {
+		score -= 6
+	}
+	// quick range-ish heuristic without regex
+	if strings.Count(orig, "-") >= 1 && (strings.ContainsAny(orig, "$€£") || strings.Contains(l, "k")) {
+		score -= 4
+	}
+
+	// CTA-ish
+	for _, bad := range []string{"apply", "view job", "see job", "see details", "learn more", "sign in"} {
+		if strings.Contains(l, bad) {
+			score -= 6
+		}
+	}
+
+	// Location-ish
+	for _, loc := range []string{"remote", "hybrid", "on-site", "onsite", "united states", "usa"} {
+		if strings.Contains(l, loc) {
+			score -= 3
+		}
+	}
+
+	// Separator soup often means concatenated row data
+	if strings.Count(orig, "|") >= 1 || strings.Count(orig, "•") >= 1 {
+		score -= 2
+	}
+
+	// Title keywords (positive)
+	titleWords := []string{
+		"engineer", "developer", "software", "backend", "frontend", "full stack", "full-stack",
+		"platform", "cloud", "devops", "sre", "security", "embedded", "firmware",
+		"data", "ml", "ai", "scientist", "analyst", "architect",
+		"manager", "director", "lead", "principal", "staff", "intern", "technician",
+	}
+	for _, w := range titleWords {
+		if strings.Contains(l, w) {
+			score += 4
+			break
+		}
+	}
+
+	// Seniority tokens
+	for _, w := range []string{"sr", "senior", "jr", "junior", "i", "ii", "iii", "iv", "principal", "staff", "lead"} {
+		if containsWord(l, w) {
+			score += 2
+		}
+	}
+
+	// Shape heuristics
+	n := len([]rune(orig))
+	if n >= 6 && n <= 80 {
+		score += 2
+	} else if n < 4 || n > 140 {
+		score -= 6
+	}
+
+	// Looks like a sentence / description
+	if strings.HasSuffix(orig, ".") || strings.Contains(l, "you will") || strings.Contains(l, "we are") {
+		score -= 4
+	}
+
+	// Too many digits is suspicious (ids/salary)
+	digits := 0
+	for _, r := range orig {
+		if r >= '0' && r <= '9' {
+			digits++
+		}
+	}
+	if digits >= 6 {
+		score -= 4
+	}
+
+	return score
+}
+
+// containsWord checks for whole-word-ish match in a cheap way.
+// This avoids "sr" matching "sre" incorrectly, etc.
+func containsWord(haystackLower, needleLower string) bool {
+	// boundary set: space and common punctuation seen in titles
+	bounds := func(r rune) bool {
+		switch r {
+		case ' ', '\t', '\n', '\r', '-', '—', '–', '/', '\\', '(', ')', '[', ']', '{', '}', ',', '.', ':', ';', '|', '•':
+			return true
+		default:
+			return false
+		}
+	}
+
+	// scan for needle and check boundaries
+	idx := strings.Index(haystackLower, needleLower)
+	for idx != -1 {
+		leftOK := idx == 0 || bounds(rune(haystackLower[idx-1]))
+		rightIdx := idx + len(needleLower)
+		rightOK := rightIdx == len(haystackLower) || bounds(rune(haystackLower[rightIdx]))
+		if leftOK && rightOK {
+			return true
+		}
+		next := strings.Index(haystackLower[idx+1:], needleLower)
+		if next == -1 {
+			break
+		}
+		idx = idx + 1 + next
 	}
 	return false
 }

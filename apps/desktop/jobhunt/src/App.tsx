@@ -140,20 +140,18 @@ export default function App() {
                 marginBottom: 10,
               }}
             >
-              <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+              <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
                 {/* logo column */}
-                <div style={{ width: 48, height: 48, flex: "0 0 48px" }}>
+                <div style={{ width: 84, height: 84, flex: "0 0 48px", display: "flex", alignItems: "center", justifyContent: "center", }}>
                   {j.companyLogoURL ? (
                     <img
                       src={logoSrc}
                       alt={j.company}
-                      width={48}
-                      height={48}
                       style={{
-                        width: 48,
-                        height: 48,
-                        borderRadius: 4,
-                        objectFit: "cover",
+                        width: 64,
+                        height: 64,
+                        borderRadius: 8,
+                        objectFit: "contain",
                         background: "#eee",
                         display: "block",
                       }}
@@ -164,22 +162,46 @@ export default function App() {
                         (e.currentTarget as HTMLImageElement).style.display = "none";
                       }}
                     />
-                  ) : null}
+                  ) : (
+                    <div
+                      style={{
+                        width: 64,
+                        height: 64,
+                        borderRadius: 8,
+                        background: "#f3f3f3",
+                      }}
+                    />
+                  )}
                 </div>
 
                 {/* existing content column */}
                 <div style={{ flex: 1 }}>
-                  <button
-                    onClick={() => {
-                      if (!confirm(`Remove "${j.title}"?`)) return;
-                      deleteJob(j.id).then(refresh).catch((e) => setErr(String(e)));
-                    }}
-                  >
-                    Remove
-                  </button>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                    <div style={{ fontWeight: 700 }}>{j.title}</div>
 
-                  <div style={{ fontWeight: 700 }}>{j.title}</div>
-                  <div style={{ opacity: 0.85 }}>
+                    <button
+                      onClick={() => {
+                        if (!confirm(`Remove "${j.title}"?`)) return;
+                        deleteJob(j.id).then(refresh).catch((e) => setErr(String(e)));
+                      }}
+                      aria-label={`Remove ${j.title}`}
+                      title="Remove"
+                      style={{
+                        border: "none",
+                        background: "transparent",
+                        cursor: "pointer",
+                        fontSize: 24,         // “large cross”
+                        lineHeight: 1,
+                        padding: 4,
+                        opacity: 0.65,
+                      }}
+                    >
+                      ×
+                    </button>
+                  </div>
+
+
+                  <div style={{ opacity: 0.75 }}>
                     {j.company} · {j.location} · {j.workMode} · score {j.score}
                   </div>
 
