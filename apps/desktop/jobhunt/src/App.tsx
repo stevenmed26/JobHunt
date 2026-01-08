@@ -26,6 +26,7 @@ type Job = {
   score: number;
   tags: string[];
   date: string;
+  companyLogoURL?: string;
 };
 
 type SortKey = "score" | "date" | "company" | "title";
@@ -124,56 +125,93 @@ export default function App() {
 
       <div style={{ marginTop: 16 }}>
         {jobs.length === 0 && <div>No jobs yet.</div>}
-        {jobs.map((j) => (
-          <div
-            key={j.id}
-            style={{
-              padding: 12,
-              border: "1px solid #ddd",
-              borderRadius: 10,
-              marginBottom: 10,
-            }}
-          >
-            <button
-              onClick={() => {
-                if (!confirm(`Remove "${j.title}"?`)) return;
-                deleteJob(j.id).then(refresh).catch((e) => setErr(String(e)))
+        {jobs.map((j) => {
+          const logoSrc =
+            j.companyLogoURL && j.companyLogoURL.startsWith("/")
+              ? `http://127.0.0.1:38471${j.companyLogoURL}`
+              : j.companyLogoURL;
+          return (
+            <div
+              key={j.id}
+              style={{
+                padding: 12,
+                border: "1px solid #ddd",
+                borderRadius: 10,
+                marginBottom: 10,
               }}
-            >Remove</button>
-            <div style={{ fontWeight: 700 }}>{j.title}</div>
-            <div style={{ opacity: 0.85 }}>
-              {j.company} · {j.location} · {j.workMode} · score {j.score}
+            >
+              <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+                {/* logo column */}
+                <div style={{ width: 48, height: 48, flex: "0 0 48px" }}>
+                  {j.companyLogoURL ? (
+                    <img
+                      src={logoSrc}
+                      alt={j.company}
+                      width={48}
+                      height={48}
+                      style={{
+                        width: 48,
+                        height: 48,
+                        borderRadius: 4,
+                        objectFit: "cover",
+                        background: "#eee",
+                        display: "block",
+                      }}
+                      loading="lazy"
+                      referrerPolicy="no-referrer"
+                      crossOrigin="anonymous"
+                      onError={(e) => {
+                        (e.currentTarget as HTMLImageElement).style.display = "none";
+                      }}
+                    />
+                  ) : null}
+                </div>
+
+                {/* existing content column */}
+                <div style={{ flex: 1 }}>
+                  <button
+                    onClick={() => {
+                      if (!confirm(`Remove "${j.title}"?`)) return;
+                      deleteJob(j.id).then(refresh).catch((e) => setErr(String(e)));
+                    }}
+                  >
+                    Remove
+                  </button>
+
+                  <div style={{ fontWeight: 700 }}>{j.title}</div>
+                  <div style={{ opacity: 0.85 }}>
+                    {j.company} · {j.location} · {j.workMode} · score {j.score}
+                  </div>
+
+                  <div style={{ marginTop: 6, display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {j.tags?.map((t) => (
+                      <span
+                        key={t}
+                        style={{
+                          fontSize: 12,
+                          padding: "2px 8px",
+                          border: "1px solid #ccc",
+                          borderRadius: 999,
+                        }}
+                      >
+                        {t}
+                      </span>
+                    ))}
+                  </div>
+
+                  <div style={{ marginTop: 8 }}>
+                    <a href={j.url} target="_blank" rel="noreferrer">
+                      Apply
+                    </a>
+                    <span style={{ marginLeft: 12, fontSize: 12, opacity: 0.75 }}>
+                      Date: {j.date}
+                    </span>
+                  </div>
+                </div>
+              </div>
             </div>
-            <div style={{ marginTop: 6, display: "flex", gap: 6, flexWrap: "wrap" }}>
-              {j.tags?.map((t) => (
-                <span
-                  key={t}
-                  style={{
-                    fontSize: 12,
-                    padding: "2px 8px",
-                    border: "1px solid #ccc",
-                    borderRadius: 999,
-                  }}
-                >
-                  {t}
-                </span>
-              ))}
-            </div>
-            <div style={{ marginTop: 8 }}>
-              <a href={j.url} target="_blank" rel="noreferrer">
-                Apply
-              </a>
-              <span style={{ marginLeft: 12, fontSize: 12, opacity: 0.75 }}>
-                Date: {j.date}
-              </span>
-            </div>
-          </div>
-        ))}
-        {jobs.length === 0 && (
-          <div style={{ opacity: 0.7 }}>
-            No jobs yet. Click “Seed fake job”.
-          </div>
-        )}
+          );
+        })}
       </div>
     </div>
   );

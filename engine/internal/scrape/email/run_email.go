@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/url"
 
 	//"sort"
 	"strings"
@@ -15,30 +16,32 @@ import (
 	"jobhunt-engine/internal/config"
 	"jobhunt-engine/internal/domain"
 	"jobhunt-engine/internal/rank"
+	"jobhunt-engine/internal/store"
 
 	"github.com/emersion/go-imap/v2"
 )
 
 type jobRow struct {
-	Company     string
-	Title       string
-	Location    string
-	WorkMode    string
-	Description string
-	URL         string
-	Score       int
-	Tags        []string
-	ReceivedAt  time.Time
-	SourceID    string
+	Company        string
+	Title          string
+	Location       string
+	WorkMode       string
+	Description    string
+	URL            string
+	Score          int
+	Tags           []string
+	ReceivedAt     time.Time
+	SourceID       string
+	CompanyLogoURL string
 }
 
 // RunEmailScrapeOnce scans UNSEEN emails, but ONLY those whose subject matches cfg.Email.SearchSubjectAny.
 // It extracts job-ish URLs and inserts rows into jobs (deduped by source_id), then marks emails \Seen.
 func RunEmailScrapeOnce(db *sql.DB, cfg config.Config, onNewJob func()) (added int, err error) {
 	const (
-		maxEmails        = 2000
-		maxLinksPerEmail = 200
-		maxAdds          = 1000
+		maxEmails        = 30
+		maxLinksPerEmail = 20
+		maxAdds          = 30
 	)
 
 	scorer := rank.YAMLScorer{Cfg: cfg}
@@ -68,7 +71,7 @@ func RunEmailScrapeOnce(db *sql.DB, cfg config.Config, onNewJob func()) (added i
 		mailbox = "INBOX"
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
 	c, err := DialAndLoginIMAP(ctx, addr, cfg.Email.Username, cfg.Email.AppPassword, GmailTLSConfig())
@@ -93,7 +96,7 @@ func RunEmailScrapeOnce(db *sql.DB, cfg config.Config, onNewJob func()) (added i
 
 runLoop:
 	for _, m := range msgs {
-
+		//log.Printf("[email] Email found with subj: %s", m.Subject)
 		receivedAt := m.Date
 		msgID, bodyText, htmlBody, subj := parseRFC822(m.RawMessage, m.Subject)
 		subj = decodeRFC2047(subj)
@@ -103,15 +106,15 @@ runLoop:
 			processed = append(processed, m.UID)
 			continue
 		}
+		log.Printf("[email] Email contains search params: %s", m.Subject)
 
 		// --- LinkedIn Job Alert special-case
-		if looksLikeLinkedInJobAlert(subj, bodyText) {
+		if looksLikeLinkedInJobAlert(m.From, subj, bodyText) {
+			log.Printf("[email] Email Looks like LinkedIn: %s", m.Subject)
 
 			liJobs, perr := ParseLinkedInJobAlertHTML(htmlBody)
-			log.Printf("[email] LinkedIn parser: found %d jobs, err=%v", len(liJobs), perr)
-			if len(liJobs) > 0 {
-				log.Printf("[email] sample: title=%q company=%q loc=%q url=%q", liJobs[0].Title, liJobs[0].Company, liJobs[0].Location, liJobs[0].URL)
-			}
+			//log.Printf("[email] LinkedIn parser: found %d jobs, err=%v", len(liJobs), perr)
+
 			if perr == nil && len(liJobs) > 0 {
 				for _, lj := range liJobs {
 					desc := strings.Join([]string{
@@ -140,18 +143,33 @@ runLoop:
 					score, tags := scorer.Score(lead)
 
 					j := jobRow{
-						Company:    lj.Company,
-						Title:      lj.Title,
-						Location:   lj.Location,
-						WorkMode:   inferWorkMode(lj.Location, subj),
-						URL:        lj.URL,
-						Score:      score,
-						Tags:       tags,
-						ReceivedAt: receivedAt.Local(),
-						SourceID:   sid,
-						// Salary:  lj.Salary,
-						// LogoURL: lj.LogoURL,
+						Company:        lj.Company,
+						Title:          lj.Title,
+						Location:       lj.Location,
+						WorkMode:       inferWorkMode(lj.Location, subj),
+						Description:    desc,
+						URL:            lj.URL,
+						Score:          score,
+						Tags:           tags,
+						ReceivedAt:     receivedAt.Local(),
+						SourceID:       sid,
+						CompanyLogoURL: lj.LogoURL,
 					}
+					domain, derr := GetOrFindCompanyDomain(ctx, db, j.Company)
+					if derr != nil {
+						log.Printf("[domain] error company=%q err=%v", j.Company, derr)
+					}
+
+					if domain != "" {
+						faviconURL := "https://www.google.com/s2/favicons?domain=" + url.QueryEscape(domain) + "&sz=64"
+						if key, _ := store.CacheLogoFromURL(ctx, db, faviconURL); key != "" {
+							j.CompanyLogoURL = key // store logo_key in job row
+						} else {
+							j.CompanyLogoURL = ""
+						}
+					}
+
+					// log.Printf("Job ready: %v", j)
 
 					ok, ierr := insertJobIfNew(ctx, db, j)
 					if ierr != nil {
@@ -173,123 +191,6 @@ runLoop:
 				continue
 			}
 		}
-
-		// // Extract URLs + anchor contexts
-		// rawURLs, contexts := extractLinksFromBody(bodyText)
-		// if len(rawURLs) == 0 {
-		// 	processed = append(processed, m.UID)
-		// 	continue
-		// }
-
-		// // Canonicalize + lightly filter junk
-		// cands := make([]string, 0, len(rawURLs))
-		// seen := map[string]struct{}{}
-		// for _, u := range rawURLs {
-		// 	cu := canonicalizeURL(u)
-		// 	if cu == "" {
-		// 		continue
-		// 	}
-		// 	key := strings.ToLower(cu)
-		// 	if _, ok := seen[key]; ok {
-		// 		continue
-		// 	}
-		// 	seen[key] = struct{}{}
-		// 	if isObviousJunkURL(cu) {
-		// 		continue
-		// 	}
-		// 	cands = append(cands, cu)
-		// }
-		// if len(cands) == 0 {
-		// 	processed = append(processed, m.UID)
-		// 	continue
-		// }
-
-		// // Rank URLs so we prefer job postings/apply pages without being too strict.
-		// sort.SliceStable(cands, func(i, j int) bool {
-		// 	return scoreURL(cands[i]) > scoreURL(cands[j])
-		// })
-
-		// if len(cands) > maxLinksPerEmail {
-		// 	cands = cands[:maxLinksPerEmail]
-		// }
-
-		// // Basic “job” fields (we’ll keep parsing lightweight for now)
-		// company := guessCompanyFromFrom(m.From)
-		// title := normalizeSubjectTitle(subj)
-		// location := "unknown"
-		// workMode := inferWorkMode("", subj)
-
-		// for _, cu := range cands {
-		// 	// Build description
-		// 	descParts := make([]string, 0, 4)
-
-		// 	// If anchor text exists for this URL, and it looks like a title, use it.
-		// 	if ctxText := contexts[cu]; ctxText != "" {
-		// 		if looksLikeTitle(ctxText) {
-		// 			title = ctxText
-		// 		}
-		// 		descParts = append(descParts, ctxText) // For now use anchor text as description
-		// 	}
-
-		// 	// Subject + sender
-		// 	descParts = append(descParts, subj)
-		// 	descParts = append(descParts, m.From)
-
-		// 	// Small body excerpt
-		// 	if bodyText != "" {
-		// 		descParts = append(descParts, clip(bodyText, 2000))
-		// 	}
-
-		// 	desc := strings.Join(descParts, "\n")
-
-		// 	sid := makeSourceID(msgID, cu, subj, m.From)
-		// 	if sid == "" {
-		// 		continue
-		// 	}
-
-		// 	lead := domain.JobLead{
-		// 		CompanyName:     company,
-		// 		Title:           title,
-		// 		URL:             cu,
-		// 		LocationRaw:     location,
-		// 		WorkMode:        workMode,
-		// 		ATSJobID:        "",
-		// 		ReqID:           "",
-		// 		Description:     desc,
-		// 		PostedAt:        &receivedAt, // This is not really when the job was posted
-		// 		FirstSeenSource: "email",
-		// 	}
-
-		// 	score, tags := scorer.Score(lead)
-
-		// 	j := jobRow{
-		// 		Company:     company,
-		// 		Title:       title,
-		// 		Location:    location,
-		// 		WorkMode:    workMode,
-		// 		Description: desc,
-		// 		URL:         cu,
-		// 		Score:       score,
-		// 		Tags:        tags,
-		// 		ReceivedAt:  receivedAt.Local(),
-		// 		SourceID:    sid,
-		// 	}
-
-		// 	ok, ierr := insertJobIfNew(ctx, db, j)
-		// 	if ierr != nil {
-		// 		continue
-		// 	}
-		// 	if ok {
-		// 		added++
-		// 		if onNewJob != nil {
-		// 			onNewJob()
-		// 		}
-		// 		if added >= maxAdds {
-		// 			processed = append(processed, m.UID)
-		// 			break runLoop
-		// 		}
-		// 	}
-		// }
 
 		processed = append(processed, m.UID)
 	}
@@ -329,8 +230,8 @@ func insertJobIfNew(ctx context.Context, db *sql.DB, j jobRow) (bool, error) {
 	tagsB, _ := json.Marshal(j.Tags)
 
 	res, err := db.ExecContext(ctx, `
-INSERT OR IGNORE INTO jobs(company, title, location, work_mode, url, score, tags, date, source_id)
-VALUES(?,?,?,?,?,?,?,?,?);`,
+INSERT OR IGNORE INTO jobs(company, title, location, work_mode, url, score, tags, date, source_id, logo_key)
+VALUES(?,?,?,?,?,?,?,?,?,?);`,
 		j.Company,
 		j.Title,
 		j.Location,
@@ -340,66 +241,25 @@ VALUES(?,?,?,?,?,?,?,?,?);`,
 		string(tagsB),
 		j.ReceivedAt.Format(time.RFC3339),
 		j.SourceID,
+		j.CompanyLogoURL,
 	)
 	if err != nil {
 		return false, err
 	}
 	n, _ := res.RowsAffected()
+	if n == 0 && j.CompanyLogoURL != "" {
+		// job already existed; backfill logo_key if missing
+		_, _ = db.ExecContext(ctx, `
+UPDATE jobs
+SET logo_key = ?
+WHERE source_id = ?
+  AND (logo_key = '' OR logo_key IS NULL);`,
+			j.CompanyLogoURL, j.SourceID,
+		)
+	}
+
+	//log.Println("New job added to DB")
 	return n > 0, nil
-}
-
-// ---------------- Matching / heuristics ----------------
-
-func containsAnyCI(s string, any []string) bool {
-	ls := strings.ToLower(s)
-	for _, a := range any {
-		a = strings.TrimSpace(a)
-		if a == "" {
-			continue
-		}
-		if strings.Contains(ls, strings.ToLower(a)) {
-			return true
-		}
-	}
-	return false
-}
-
-func normalizeSubjectTitle(subj string) string {
-	s := strings.TrimSpace(subj)
-	if s == "" {
-		return "Job Posting"
-	}
-	// strip common prefixes
-	for _, p := range []string{"fwd:", "fw:", "re:"} {
-		if strings.HasPrefix(strings.ToLower(s), p) {
-			s = strings.TrimSpace(s[len(p):])
-		}
-	}
-	// avoid absurdly long titles
-	if len(s) > 140 {
-		s = s[:140]
-	}
-	return s
-}
-
-func looksLikeTitle(s string) bool {
-	s = strings.TrimSpace(s)
-	if len(s) < 8 {
-		return false
-	}
-	ls := strings.ToLower(s)
-	// common nav labels / junk
-	if ls == "apply" || ls == "view" || ls == "mobile" || ls == "unsubscribe" {
-		return false
-	}
-	// require some letters
-	letters := 0
-	for _, r := range s {
-		if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') {
-			letters++
-		}
-	}
-	return letters >= 5
 }
 
 func inferWorkMode(_ string, subject string) string {
@@ -414,44 +274,4 @@ func inferWorkMode(_ string, subject string) string {
 	default:
 		return "unknown"
 	}
-}
-
-func guessCompanyFromFrom(from string) string {
-	from = strings.TrimSpace(from)
-	if from == "" {
-		return "Unknown"
-	}
-	// Try friendly name: Foo Bar <x@y.com>
-	if i := strings.Index(from, "<"); i > 0 {
-		name := strings.TrimSpace(from[:i])
-		name = strings.Trim(name, `"`)
-		if name != "" {
-			return name
-		}
-	}
-	// fallback: domain
-	if at := strings.LastIndex(from, "@"); at >= 0 {
-		d := strings.Trim(from[at+1:], "> ")
-		parts := strings.Split(d, ".")
-		if len(parts) > 0 && parts[0] != "" {
-			return strings.ToUpper(parts[0][:1]) + parts[0][1:]
-		}
-	}
-	return "Unknown"
-}
-
-// ---------------- Dedupe / URL canonicalization ----------------
-
-func makeSourceID(messageID, urlStr, subject, from string) string {
-	nurl := canonicalizeURL(urlStr)
-	if nurl == "" {
-		return ""
-	}
-	base := ""
-	if messageID != "" {
-		base = "mid:" + messageID + "|url:" + nurl
-	} else {
-		base = "from:" + from + "|sub:" + subject + "|url:" + nurl
-	}
-	return hashString(base)
 }

@@ -65,7 +65,7 @@ scoring:
       any: ["10+ years", "10 years"]
 
 email:
-  enabled: true
+  enabled: false
   imap_host: "imap.gmail.com"
   imap_port: 993
   username: "your@gmail.com"
@@ -76,4 +76,7 @@ email:
     - "new jobs"
     - "Indeed"
     - "LinkedIn"
+    - "Engineer"
+    - "Software"
+    - "Developer"
 

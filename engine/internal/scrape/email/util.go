@@ -208,3 +208,35 @@ func clip(s string, max int) string {
 	}
 	return s[:max]
 }
+
+// ---------------- Matching / heuristics ----------------
+
+func containsAnyCI(s string, any []string) bool {
+	ls := strings.ToLower(s)
+	for _, a := range any {
+		a = strings.TrimSpace(a)
+		if a == "" {
+			continue
+		}
+		if strings.Contains(ls, strings.ToLower(a)) {
+			return true
+		}
+	}
+	return false
+}
+
+// ---------------- Dedupe / URL canonicalization ----------------
+
+func makeSourceID(messageID, urlStr, subject, from string) string {
+	nurl := canonicalizeURL(urlStr)
+	if nurl == "" {
+		return ""
+	}
+	base := ""
+	if messageID != "" {
+		base = "mid:" + messageID + "|url:" + nurl
+	} else {
+		base = "from:" + from + "|sub:" + subject + "|url:" + nurl
+	}
+	return hashString(base)
+}

@@ -8,9 +8,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -363,6 +365,39 @@ func run() error {
 			}
 		}
 	})
+	mux.HandleFunc("/logo/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "GET only", http.StatusMethodNotAllowed)
+			return
+		}
+		key := strings.TrimPrefix(r.URL.Path, "/logo/")
+		key = strings.TrimSpace(key)
+		if key == "" {
+			http.Error(w, "missing key", 400)
+			return
+		}
+
+		var ct string
+		var b []byte
+		err := db.QueryRowContext(r.Context(),
+			`SELECT content_type, bytes FROM logos WHERE key = ? LIMIT 1;`, key,
+		).Scan(&ct, &b)
+		if err == sql.ErrNoRows {
+			http.NotFound(w, r)
+			return
+		}
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+
+		if ct == "" {
+			ct = "image/*"
+		}
+		w.Header().Set("Content-Type", ct)
+		w.Header().Set("Cache-Control", "public, max-age=604800") // 7d
+		_, _ = w.Write(b)
+	})
 
 	// Bind to a predictable local port for now (simpler).
 	addr := "127.0.0.1:38471"
@@ -409,6 +444,79 @@ func writeJSON(w http.ResponseWriter, v any) {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	_ = enc.Encode(v)
+}
+
+func handleLogo(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "GET only", http.StatusMethodNotAllowed)
+		return
+	}
+
+	u := r.URL.Query().Get("u") // already decoded by net/http
+	if u == "" {
+		http.Error(w, "missing u", http.StatusBadRequest)
+		return
+	}
+
+	// Gmail proxy URLs sometimes look like:
+	// https://ci3.googleusercontent.com/...#https://media.licdn.com/...
+	// The part after # is NOT sent in HTTP requests and often points to licdn (403).
+	// Always drop the fragment and fetch the actual URL.
+	if i := strings.IndexByte(u, '#'); i >= 0 {
+		u = strings.TrimSpace(u[:i])
+	}
+
+	parsed, err := url.Parse(u)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		http.Error(w, "bad url", http.StatusBadRequest)
+		return
+	}
+
+	// allowlist
+	host := strings.ToLower(parsed.Host)
+	allowed := host == "media.licdn.com" ||
+		host == "media-exp1.licdn.com" ||
+		host == "media-exp2.licdn.com" ||
+		strings.HasSuffix(host, ".googleusercontent.com") // Gmail image proxy
+	if !allowed {
+		http.Error(w, "host not allowed", http.StatusForbidden)
+		return
+	}
+
+	req, _ := http.NewRequest(http.MethodGet, u, nil)
+	req.Header.Set("User-Agent", "Mozilla/5.0")
+	req.Header.Set("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+
+	// Only set Referer for LinkedIn CDN; setting it for googleusercontent is unnecessary and can hurt.
+	if strings.HasSuffix(host, "licdn.com") {
+		req.Header.Set("Referer", "https://www.linkedin.com/")
+	}
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("[logo] fetch failed url=%s err=%v", u, err)
+		http.Error(w, "fetch failed", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
+		log.Printf("[logo] upstream status=%s url=%s body=%q", resp.Status, u, string(b))
+		http.Error(w, "upstream status: "+resp.Status, http.StatusBadGateway)
+		return
+	}
+
+	ct := resp.Header.Get("Content-Type")
+	if ct == "" {
+		ct = "image/*"
+	}
+	w.Header().Set("Content-Type", ct)
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+
+	_, _ = io.Copy(w, resp.Body)
 }
 
 func deleteJob(ctx context.Context, db *sql.DB, id int64) error {

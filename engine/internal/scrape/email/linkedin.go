@@ -103,17 +103,6 @@ func ParseLinkedInJobAlertHTML(htmlBody string) ([]LinkedInJob, error) {
 			}
 		})
 
-		// Logo: first img we can find in the card
-		if j.LogoURL == "" {
-			if img := card.Find("img").First(); img.Length() > 0 {
-				if src, ok := img.Attr("src"); ok && strings.TrimSpace(src) != "" {
-					j.LogoURL = strings.TrimSpace(src)
-				} else if src, ok := img.Attr("data-src"); ok && strings.TrimSpace(src) != "" {
-					j.LogoURL = strings.TrimSpace(src)
-				}
-			}
-		}
-
 		// Salary (optional)
 		if j.Salary == "" {
 			if blob := cleanText(card.Text()); blob != "" {
@@ -312,7 +301,11 @@ func looksLikeLinkedInJobURL(href string) bool {
 		(strings.Contains(h, "/jobs/view") || strings.Contains(h, "/comm/jobs/view"))
 }
 
-func looksLikeLinkedInJobAlert(subj, body string) bool {
+func looksLikeLinkedInJobAlert(from, subj, body string) bool {
+	f := strings.ToLower(from)
+	if strings.Contains(f, "jobalerts-noreply") {
+		return true
+	}
 	s := strings.ToLower(subj)
 	if strings.Contains(s, "job alert") || strings.Contains(s, "linkedin") {
 		// body check prevents false positives

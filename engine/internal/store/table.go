@@ -9,15 +9,17 @@ import (
 )
 
 type Job struct {
-	ID       int64    `json:"id"`
-	Company  string   `json:"company"`
-	Title    string   `json:"title"`
-	Location string   `json:"location"`
-	WorkMode string   `json:"workMode"`
-	URL      string   `json:"url"`
-	Score    int      `json:"score"`
-	Tags     []string `json:"tags"`
-	Date     string   `json:"date"`
+	ID             int64    `json:"id"`
+	Company        string   `json:"company"`
+	Title          string   `json:"title"`
+	Location       string   `json:"location"`
+	WorkMode       string   `json:"workMode"`
+	URL            string   `json:"url"`
+	Score          int      `json:"score"`
+	Tags           []string `json:"tags"`
+	Date           string   `json:"date"`
+	CompanyLogoURL string   `json:"companyLogoURL"`
+	LogoKey        string   `json:"logoKey"`
 }
 
 type ListJobsOpts struct {
@@ -38,12 +40,41 @@ CREATE TABLE IF NOT EXISTS jobs (
   url TEXT NOT NULL,
   score INTEGER NOT NULL DEFAULT 0,
   tags TEXT NOT NULL DEFAULT '[]',
-  date TEXT NOT NULL
+  date TEXT NOT NULL,
+  logo_key TEXT NOT NULL DEFAULT ''
 );`); err != nil {
 		return err
 	}
 
-	// Does column exist?
+	if _, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS logos (
+  key TEXT PRIMARY KEY,
+  content_type TEXT NOT NULL,
+  bytes BLOB NOT NULL,
+  fetched_at TEXT NOT NULL
+);`); err != nil {
+		return err
+	}
+
+	if _, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS company_domains (
+  company TEXT PRIMARY KEY,
+  domain TEXT NOT NULL,
+  fetched_at TEXT NOT NULL
+);
+`); err != nil {
+		return err
+	}
+
+	// Optional but nice: index by domain too (not required)
+	if _, err := db.Exec(`
+CREATE INDEX IF NOT EXISTS idx_company_domains_domain
+ON company_domains(domain);
+`); err != nil {
+		return err
+	}
+
+	// Does column exist? source_id
 	var one int
 	err := db.QueryRow(`
 SELECT 1
@@ -71,6 +102,27 @@ ON jobs(source_id)
 WHERE source_id != '';
 `); err != nil {
 		return err
+	}
+
+	// Does column exist? logo_key
+	err = db.QueryRow(`
+SELECT 1
+FROM pragma_table_info('jobs')
+WHERE name = 'logo_key'
+LIMIT 1;
+`).Scan(&one)
+
+	hasLogoKey := true
+	if err == sql.ErrNoRows {
+		hasLogoKey = false
+	} else if err != nil {
+		return err
+	}
+
+	if !hasLogoKey {
+		if _, err := db.Exec(`ALTER TABLE jobs ADD COLUMN logo_key TEXT NOT NULL DEFAULT '';`); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -123,7 +175,7 @@ func ListJobs(ctx context.Context, db *sql.DB, opts ListJobsOpts) ([]Job, error)
 	}
 
 	query := fmt.Sprintf(`
-SELECT id, company, title, location, work_mode, url, score, tags, date
+SELECT id, company, title, location, work_mode, url, score, tags, date, logo_key
 FROM jobs
 %s
 ORDER BY %s %s
@@ -152,9 +204,18 @@ LIMIT ?;
 			&j.Score,
 			&tagsJSON,
 			&dateStr,
+			&j.LogoKey,
 		); err != nil {
 			return nil, err
 		}
+		// Build URL for UI
+		if j.LogoKey != "" {
+			j.CompanyLogoURL = "/logo/" + j.LogoKey
+		} else {
+			j.CompanyLogoURL = ""
+		}
+		//log.Printf("logo_key=%q companyLogoURL=%q", j.LogoKey, j.CompanyLogoURL)
+		//log.Printf("Logo URL: http://127.0.0.1:38471%s", j.CompanyLogoURL)
 		_ = json.Unmarshal([]byte(tagsJSON), &j.Tags)
 		parsedDate, _ = time.Parse(time.RFC3339, dateStr)
 		j.Date = parsedDate.Format("2006-01-02 15:04:05")
