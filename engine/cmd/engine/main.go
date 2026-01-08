@@ -2,12 +2,17 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/subtle"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -18,20 +23,20 @@ import (
 	"sync/atomic"
 
 	"jobhunt-engine/internal/config"
+	email_scrape "jobhunt-engine/internal/scrape/email"
+	"jobhunt-engine/internal/store"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/gofrs/flock"
 )
 
-type Job struct {
-	ID        int64     `json:"id"`
-	Company   string    `json:"company"`
-	Title     string    `json:"title"`
-	Location  string    `json:"location"`
-	WorkMode  string    `json:"workMode"`
-	URL       string    `json:"url"`
-	Score     int       `json:"score"`
-	Tags      []string  `json:"tags"`
-	FirstSeen time.Time `json:"firstSeen"`
+type ScrapeStatus struct {
+	LastRunAt string `json:"last_run_at"`
+	LastOkAt  string `json:"last_ok_at"`
+	LastError string `json:"last_error"`
+	LastAdded int    `json:"last_added"`
+	Running   bool   `json:"running"`
 }
 
 type eventHub struct {
@@ -71,19 +76,47 @@ func (h *eventHub) publish(evt string) {
 }
 
 func main() {
+	if err := run(); err != nil {
+		log.Printf("fatal: %v", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	dataDir := os.Getenv("JOBHUNT_DATA_DIR")
 	if dataDir == "" {
 		dataDir = "."
 	}
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("%s", err)
 	}
+
+	lockPath := filepath.Join(dataDir, "engine.lock")
+	lk := flock.New(lockPath)
+
+	// TryLock is non-blocking (preferred for “only one instance”)
+	deadline := time.Now().Add(1 * time.Second)
+	for {
+		locked, err := lk.TryLock()
+		if err != nil {
+			return err
+		}
+		if locked {
+			break
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("engine is already running: %s", lockPath)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	defer func() {
+		_ = lk.Unlock()
+	}()
 
 	userCfgPath, err := config.EnsureUserConfig(dataDir)
 	if err != nil {
-		log.Fatalf("config bootstrap failed: %v", err)
+		return fmt.Errorf("config bootstrap failed: %v", err)
 	}
-
 	// Load config and keep it reloadable
 	var cfgVal atomic.Value // stores config.Config
 	loadCfg := func() (config.Config, error) {
@@ -91,9 +124,13 @@ func main() {
 	}
 	cfg, err := loadCfg()
 	if err != nil {
-		log.Fatalf("config load failed (%s): %v", userCfgPath, err)
+		return fmt.Errorf("config load failed (%s): %v", userCfgPath, err)
 	}
 	cfgVal.Store(cfg)
+
+	// Load scrape status
+	var scrapeStatus atomic.Value // stores ScrapeStatus
+	scrapeStatus.Store(ScrapeStatus{})
 
 	// scorer := func(job domain.JobLead) (int, []string) {
 	// 	c := cfgVal.Load().(config.Config)
@@ -102,23 +139,47 @@ func main() {
 
 	dbPath := filepath.Join(dataDir, "jobhunt.db")
 	db, err := sql.Open("sqlite", dbPath)
+	if _, err := db.Exec(`PRAGMA journal_mode=WAL;`); err != nil {
+		log.Printf("WARN: set WAL: %v", err)
+	}
+	if _, err := db.Exec(`PRAGMA busy_timeout=5000;`); err != nil {
+		log.Printf("WARN: set busy_timeout: %v", err)
+	}
+	if _, err := db.Exec(`PRAGMA synchronous=NORMAL;`); err != nil {
+		log.Printf("WARN: set synchronous: %v", err)
+	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	db.SetConnMaxLifetime(0)
 	if err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("%s", err)
 	}
 	defer db.Close()
 
-	if err := migrate(db); err != nil {
-		log.Fatal(err)
+	if err := store.Migrate(db); err != nil {
+		return fmt.Errorf("%s", err)
+	}
+	if _, err := store.CleanupOldJobs(db); err != nil {
+		log.Printf("[retention] cleanup failed: %v", err)
 	}
 
 	hub := newHub()
 
+	startEmailPoller(db, &cfgVal, &scrapeStatus, hub)
+
 	mux := http.NewServeMux()
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, map[string]any{"ok": true, "time": time.Now().Format(time.RFC3339)})
-	})
+
 	mux.HandleFunc("/jobs", func(w http.ResponseWriter, r *http.Request) {
-		jobs, err := listJobs(r.Context(), db)
+		q := r.URL.Query()
+
+		sort := q.Get("sort")     // "score" | "date" | "company" | "title"
+		window := q.Get("window") // "24h" | "7d" | "all"
+
+		jobs, err := store.ListJobs(r.Context(), db, store.ListJobsOpts{
+			Sort:   sort,
+			Window: window,
+			Limit:  50000,
+		})
 		if err != nil {
 			http.Error(w, err.Error(), 500)
 			return
@@ -157,12 +218,35 @@ func main() {
 			writeJSON(w, cur)
 			return
 		case http.MethodPut:
-			var incoming config.Config
+			// Temporary debug block
+			// b, _ := io.ReadAll(r.Body)
+			// log.Printf("PUT /config raw : %s", string(b))
+
 			dec := json.NewDecoder(r.Body)
-			//dec.DisallowUnknownFields()
+			dec.DisallowUnknownFields()
+
+			var incoming config.Config
 			if err := dec.Decode(&incoming); err != nil {
 				http.Error(w, "invalid JSON: "+err.Error(), 400)
 				return
+			}
+			if dec.More() {
+				http.Error(w, "invalid JSON: trailing data", 400)
+				return
+			}
+
+			// log.Printf("decoded incoming app=%+v", incoming.App)
+			// log.Printf("decoded incoming port=%d data_dir=%q", incoming.App.Port, incoming.App.DataDir)
+
+			if incoming.App.Port == 0 {
+				http.Error(w, "invalid config: app.port missing", 400)
+				return
+			}
+			if incoming.Email.Enabled {
+				if incoming.Email.IMAPHost == "" || incoming.Email.Username == "" {
+					http.Error(w, "invalid config: email enabled but missing host/username", 400)
+					return
+				}
 			}
 
 			if err := config.SaveAtomic(userCfgPath, incoming); err != nil {
@@ -170,7 +254,6 @@ func main() {
 				return
 			}
 
-			// Reload from disk
 			saved, err := loadCfg()
 			if err != nil {
 				http.Error(w, "saved but reload failed: "+err.Error(), 500)
@@ -189,12 +272,65 @@ func main() {
 		abs, _ := filepath.Abs(userCfgPath)
 		writeJSON(w, map[string]any{"path": abs})
 	})
+	mux.HandleFunc("/scrape/status", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "GET only", 405)
+			return
+		}
+		st := scrapeStatus.Load().(ScrapeStatus)
+		writeJSON(w, st)
+	})
+
+	mux.HandleFunc("/scrape/run", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "POST only", 405)
+			return
+		}
+
+		// prevent concurrent runs
+		st := scrapeStatus.Load().(ScrapeStatus)
+		if st.Running {
+			writeJSON(w, map[string]any{"ok": false, "msg": "already running"})
+			return
+		}
+
+		// run async so request returns quickly
+		scrapeStatus.Store(ScrapeStatus{
+			LastRunAt: time.Now().Format(time.RFC3339),
+			Running:   true,
+			LastError: "",
+			LastAdded: 0,
+			LastOkAt:  st.LastOkAt,
+		})
+
+		go func() {
+			added, err := email_scrape.RunEmailScrapeOnce(db, cfgVal.Load().(config.Config), func() {
+				hub.publish(`{"type":"job_created"}`)
+			})
+			now := time.Now().Format(time.RFC3339)
+
+			next := scrapeStatus.Load().(ScrapeStatus)
+			next.Running = false
+			next.LastRunAt = now
+			next.LastAdded = added
+			if err != nil {
+				next.LastError = err.Error()
+			} else {
+				next.LastError = ""
+				next.LastOkAt = now
+			}
+			scrapeStatus.Store(next)
+		}()
+
+		writeJSON(w, map[string]any{"ok": true})
+	})
+
 	mux.HandleFunc("/seed", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "POST only", 405)
 			return
 		}
-		job, err := seedJob(r.Context(), db)
+		job, err := store.SeedJob(r.Context(), db)
 		if err != nil {
 			http.Error(w, err.Error(), 500)
 			return
@@ -233,12 +369,45 @@ func main() {
 			}
 		}
 	})
+	mux.HandleFunc("/logo/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "GET only", http.StatusMethodNotAllowed)
+			return
+		}
+		key := strings.TrimPrefix(r.URL.Path, "/logo/")
+		key = strings.TrimSpace(key)
+		if key == "" {
+			http.Error(w, "missing key", 400)
+			return
+		}
+
+		var ct string
+		var b []byte
+		err := db.QueryRowContext(r.Context(),
+			`SELECT content_type, bytes FROM logos WHERE key = ? LIMIT 1;`, key,
+		).Scan(&ct, &b)
+		if err == sql.ErrNoRows {
+			http.NotFound(w, r)
+			return
+		}
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+
+		if ct == "" {
+			ct = "image/*"
+		}
+		w.Header().Set("Content-Type", ct)
+		w.Header().Set("Cache-Control", "public, max-age=604800") // 7d
+		_, _ = w.Write(b)
+	})
 
 	// Bind to a predictable local port for now (simpler).
 	addr := "127.0.0.1:38471"
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("%s", err)
 	}
 	log.Printf("engine listening on http://%s (db=%s)", addr, dbPath)
 
@@ -246,7 +415,14 @@ func main() {
 		Handler:           cors(mux),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
-	log.Fatal(srv.Serve(ln))
+	shutdownToken, err := randomToken(32)
+	if err != nil {
+		return err
+	}
+	log.Printf("shutdown_token=%s", shutdownToken)
+
+	mux.HandleFunc("/shutdown", shutdownHandler(&shutdownToken, srv))
+	return fmt.Errorf("%s", srv.Serve(ln))
 }
 
 func cors(next http.Handler) http.Handler {
@@ -267,73 +443,6 @@ func cors(next http.Handler) http.Handler {
 	})
 }
 
-func migrate(db *sql.DB) error {
-	_, err := db.Exec(`
-CREATE TABLE IF NOT EXISTS jobs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  company TEXT NOT NULL,
-  title TEXT NOT NULL,
-  location TEXT NOT NULL,
-  work_mode TEXT NOT NULL,
-  url TEXT NOT NULL,
-  score INTEGER NOT NULL DEFAULT 0,
-  tags TEXT NOT NULL DEFAULT '[]',
-  first_seen TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_jobs_first_seen ON jobs(first_seen DESC);
-`)
-	return err
-}
-
-func listJobs(ctx context.Context, db *sql.DB) ([]Job, error) {
-	rows, err := db.QueryContext(ctx, `
-SELECT id, company, title, location, work_mode, url, score, tags, first_seen
-FROM jobs
-ORDER BY first_seen DESC
-LIMIT 200;`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var out []Job
-	for rows.Next() {
-		var j Job
-		var tagsJSON string
-		var firstSeenStr string
-		if err := rows.Scan(&j.ID, &j.Company, &j.Title, &j.Location, &j.WorkMode, &j.URL, &j.Score, &tagsJSON, &firstSeenStr); err != nil {
-			return nil, err
-		}
-		_ = json.Unmarshal([]byte(tagsJSON), &j.Tags)
-		j.FirstSeen, _ = time.Parse(time.RFC3339, firstSeenStr)
-		out = append(out, j)
-	}
-	return out, rows.Err()
-}
-
-func seedJob(ctx context.Context, db *sql.DB) (Job, error) {
-	j := Job{
-		Company:   "SeedCo",
-		Title:     "SRE / Platform Engineer (DFW or Remote)",
-		Location:  "Dallas-Fort Worth, TX",
-		WorkMode:  "remote",
-		URL:       "https://example.com/apply",
-		Score:     88,
-		Tags:      []string{"SRE", "Kubernetes", "Terraform", "AWS", "Go"},
-		FirstSeen: time.Now().UTC(),
-	}
-	tagsB, _ := json.Marshal(j.Tags)
-	res, err := db.ExecContext(ctx, `
-INSERT INTO jobs(company, title, location, work_mode, url, score, tags, first_seen)
-VALUES(?,?,?,?,?,?,?,?);`,
-		j.Company, j.Title, j.Location, j.WorkMode, j.URL, j.Score, string(tagsB), j.FirstSeen.Format(time.RFC3339))
-	if err != nil {
-		return Job{}, err
-	}
-	j.ID, _ = res.LastInsertId()
-	return j, nil
-}
-
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	enc := json.NewEncoder(w)
@@ -341,7 +450,181 @@ func writeJSON(w http.ResponseWriter, v any) {
 	_ = enc.Encode(v)
 }
 
+func handleLogo(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "GET only", http.StatusMethodNotAllowed)
+		return
+	}
+
+	u := r.URL.Query().Get("u") // already decoded by net/http
+	if u == "" {
+		http.Error(w, "missing u", http.StatusBadRequest)
+		return
+	}
+
+	// Gmail proxy URLs sometimes look like:
+	// https://ci3.googleusercontent.com/...#https://media.licdn.com/...
+	// The part after # is NOT sent in HTTP requests and often points to licdn (403).
+	// Always drop the fragment and fetch the actual URL.
+	if i := strings.IndexByte(u, '#'); i >= 0 {
+		u = strings.TrimSpace(u[:i])
+	}
+
+	parsed, err := url.Parse(u)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		http.Error(w, "bad url", http.StatusBadRequest)
+		return
+	}
+
+	// allowlist
+	host := strings.ToLower(parsed.Host)
+	allowed := host == "media.licdn.com" ||
+		host == "media-exp1.licdn.com" ||
+		host == "media-exp2.licdn.com" ||
+		strings.HasSuffix(host, ".googleusercontent.com") // Gmail image proxy
+	if !allowed {
+		http.Error(w, "host not allowed", http.StatusForbidden)
+		return
+	}
+
+	req, _ := http.NewRequest(http.MethodGet, u, nil)
+	req.Header.Set("User-Agent", "Mozilla/5.0")
+	req.Header.Set("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+
+	// Only set Referer for LinkedIn CDN; setting it for googleusercontent is unnecessary and can hurt.
+	if strings.HasSuffix(host, "licdn.com") {
+		req.Header.Set("Referer", "https://www.linkedin.com/")
+	}
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("[logo] fetch failed url=%s err=%v", u, err)
+		http.Error(w, "fetch failed", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
+		log.Printf("[logo] upstream status=%s url=%s body=%q", resp.Status, u, string(b))
+		http.Error(w, "upstream status: "+resp.Status, http.StatusBadGateway)
+		return
+	}
+
+	ct := resp.Header.Get("Content-Type")
+	if ct == "" {
+		ct = "image/*"
+	}
+	w.Header().Set("Content-Type", ct)
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+
+	_, _ = io.Copy(w, resp.Body)
+}
+
 func deleteJob(ctx context.Context, db *sql.DB, id int64) error {
 	_, err := db.ExecContext(ctx, `DELETE FROM jobs WHERE id = ?;`, id)
 	return err
+}
+
+func startEmailPoller(db *sql.DB, cfgVal *atomic.Value, scrapeStatus *atomic.Value, hub *eventHub) {
+	go func() {
+		// run forever; interval is read from cfg on each loop so config updates apply live
+		var lastTick time.Time
+
+		for {
+			cfg := cfgVal.Load().(config.Config)
+			sec := cfg.Polling.EmailSeconds
+			if sec <= 0 {
+				sec = 60
+			}
+
+			// sleep until next tick (dynamic interval)
+			if !lastTick.IsZero() {
+				time.Sleep(time.Duration(sec) * time.Second)
+			}
+			lastTick = time.Now()
+
+			if !cfg.Email.Enabled {
+				continue
+			}
+
+			// Prevent concurrent runs (shares the same status guard)
+			st := scrapeStatus.Load().(ScrapeStatus)
+			if st.Running {
+				continue
+			}
+
+			scrapeStatus.Store(ScrapeStatus{
+				LastRunAt: time.Now().Format(time.RFC3339),
+				Running:   true,
+				LastError: "",
+				LastAdded: 0,
+				LastOkAt:  st.LastOkAt,
+			})
+
+			added, err := email_scrape.RunEmailScrapeOnce(db, cfg, func() {
+				hub.publish(`{"type":"job_created"}`)
+			})
+			now := time.Now().Format(time.RFC3339)
+
+			next := scrapeStatus.Load().(ScrapeStatus)
+			next.Running = false
+			next.LastRunAt = now
+			next.LastAdded = added
+			if err != nil {
+				next.LastError = err.Error()
+			} else {
+				next.LastError = ""
+				next.LastOkAt = now
+			}
+			scrapeStatus.Store(next)
+		}
+	}()
+}
+
+func randomToken(n int) (string, error) {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+func shutdownHandler(token *string, srv *http.Server) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Local-only guard (covers typical desktop usage)
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil {
+			// RemoteAddr can sometimes be just a host; fall back safely
+			host = r.RemoteAddr
+		}
+		if host != "127.0.0.1" && host != "::1" && host != "localhost" {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+
+		// Token guard
+		got := r.Header.Get("X-Shutdown-Token")
+		if got == "" || subtle.ConstantTimeCompare([]byte(got), []byte(*token)) != 1 {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		// Respond immediately, then shutdown asynchronously
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("shutting down\n"))
+
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = srv.Shutdown(ctx)
+		}()
+	}
 }

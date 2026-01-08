@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { events, getJobs, seedJob, deleteJob } from "./api";
 import Preferences from "./Preferences";
+import Scraping from "./Scraping";
 import { Command } from "@tauri-apps/plugin-shell";
 
 async function startEngineDebug() {
@@ -24,18 +25,25 @@ type Job = {
   url: string;
   score: number;
   tags: string[];
-  firstSeen: string;
+  date: string;
+  companyLogoURL?: string;
 };
 
+type SortKey = "score" | "date" | "company" | "title";
+type WindowKey = "24h" | "7d" | "all";
+
 export default function App() {
-  const [view, setView] = useState<"jobs" | "prefs">("jobs");
+  const [sort, setSort] = useState<SortKey>("score");
+  const [windowKey, setWindowKey] = useState<WindowKey>("7d");
+
+  const [view, setView] = useState<"jobs" | "prefs" | "scrape">("jobs");
   const [jobs, setJobs] = useState<Job[]>([]);
   const [err, setErr] = useState<string>("");
 
   async function refresh() {
     try {
       setErr("");
-      const data = await getJobs();
+      const data = await getJobs(params);
 
       // HARD GUARANTEE jobs is always an array
       setJobs(Array.isArray(data) ? data : []);
@@ -45,19 +53,33 @@ export default function App() {
     }
   }
 
+  useEffect(() => {
+    startEngineDebug().catch(console.error);
+  }, []);
+
+  const params = useMemo(() => {
+    const p = new URLSearchParams({
+      sort,
+      window: windowKey,
+    });
+    return p.toString();
+  }, [sort, windowKey]);
+
 
   useEffect(() => {
-    startEngineDebug()
 
     refresh();
     const stop = events((msg) => {
       if (msg?.type === "job_created" || msg?.type === "job_deleted") refresh();
     });
     return stop;
-  }, []);
+  }, [params]);
 
   if (view === "prefs") {
     return <Preferences onBack={() => setView("jobs")} />;
+  }
+  if (view === "scrape") {
+    return <Scraping onBack={() => setView("jobs")} />;
   }
 
   return (
@@ -69,6 +91,27 @@ export default function App() {
           Seed fake job
         </button>
         <button onClick={() => setView("prefs")}>Preferences</button>
+        <button onClick={() => setView("scrape")}>Scraping</button>
+      </div>
+      <div style={{ display: "flex", gap: 12, alignItems: "center", marginTop: 12 }}>
+        <label>
+          Sort{" "}
+          <select value={sort} onChange={(e) => setSort(e.target.value as SortKey)}>
+            <option value="score">Score</option>
+            <option value="date">Date</option>
+            <option value="company">Company</option>
+            <option value="title">Title</option>
+          </select>
+        </label>
+
+        <label>
+          Time{" "}
+          <select value={windowKey} onChange={(e) => setWindowKey(e.target.value as WindowKey)}>
+            <option value="24h">Last 24 hours</option>
+            <option value="7d">Last week</option>
+            <option value="all">All</option>
+          </select>
+        </label>
       </div>
 
       {err && (
@@ -82,56 +125,115 @@ export default function App() {
 
       <div style={{ marginTop: 16 }}>
         {jobs.length === 0 && <div>No jobs yet.</div>}
-        {jobs.map((j) => (
-          <div
-            key={j.id}
-            style={{
-              padding: 12,
-              border: "1px solid #ddd",
-              borderRadius: 10,
-              marginBottom: 10,
-            }}
-          >
-            <button
-              onClick={() => {
-                if (!confirm(`Remove "${j.title}"?`)) return;
-                deleteJob(j.id).then(refresh).catch((e) => setErr(String(e)))
+        {jobs.map((j) => {
+          const logoSrc =
+            j.companyLogoURL && j.companyLogoURL.startsWith("/")
+              ? `http://127.0.0.1:38471${j.companyLogoURL}`
+              : j.companyLogoURL;
+          return (
+            <div
+              key={j.id}
+              style={{
+                padding: 12,
+                border: "1px solid #ddd",
+                borderRadius: 10,
+                marginBottom: 10,
               }}
-            >Remove</button>
-            <div style={{ fontWeight: 700 }}>{j.title}</div>
-            <div style={{ opacity: 0.85 }}>
-              {j.company} · {j.location} · {j.workMode} · score {j.score}
+            >
+              <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                {/* logo column */}
+                <div style={{ width: 84, height: 84, flex: "0 0 48px", display: "flex", alignItems: "center", justifyContent: "center", }}>
+                  {j.companyLogoURL ? (
+                    <img
+                      src={logoSrc}
+                      alt={j.company}
+                      style={{
+                        width: 64,
+                        height: 64,
+                        borderRadius: 8,
+                        objectFit: "contain",
+                        background: "#eee",
+                        display: "block",
+                      }}
+                      loading="lazy"
+                      referrerPolicy="no-referrer"
+                      crossOrigin="anonymous"
+                      onError={(e) => {
+                        (e.currentTarget as HTMLImageElement).style.display = "none";
+                      }}
+                    />
+                  ) : (
+                    <div
+                      style={{
+                        width: 64,
+                        height: 64,
+                        borderRadius: 8,
+                        background: "#f3f3f3",
+                      }}
+                    />
+                  )}
+                </div>
+
+                {/* existing content column */}
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                    <div style={{ fontWeight: 700 }}>{j.title}</div>
+
+                    <button
+                      onClick={() => {
+                        if (!confirm(`Remove "${j.title}"?`)) return;
+                        deleteJob(j.id).then(refresh).catch((e) => setErr(String(e)));
+                      }}
+                      aria-label={`Remove ${j.title}`}
+                      title="Remove"
+                      style={{
+                        border: "none",
+                        background: "transparent",
+                        cursor: "pointer",
+                        fontSize: 24,         // “large cross”
+                        lineHeight: 1,
+                        padding: 4,
+                        opacity: 0.65,
+                      }}
+                    >
+                      ×
+                    </button>
+                  </div>
+
+
+                  <div style={{ opacity: 0.75 }}>
+                    {j.company} · {j.location} · {j.workMode} · score {j.score}
+                  </div>
+
+                  <div style={{ marginTop: 6, display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {j.tags?.map((t) => (
+                      <span
+                        key={t}
+                        style={{
+                          fontSize: 12,
+                          padding: "2px 8px",
+                          border: "1px solid #ccc",
+                          borderRadius: 999,
+                        }}
+                      >
+                        {t}
+                      </span>
+                    ))}
+                  </div>
+
+                  <div style={{ marginTop: 8 }}>
+                    <a href={j.url} target="_blank" rel="noreferrer">
+                      Apply
+                    </a>
+                    <span style={{ marginLeft: 12, fontSize: 12, opacity: 0.75 }}>
+                      Date: {j.date}
+                    </span>
+                  </div>
+                </div>
+              </div>
             </div>
-            <div style={{ marginTop: 6, display: "flex", gap: 6, flexWrap: "wrap" }}>
-              {j.tags?.map((t) => (
-                <span
-                  key={t}
-                  style={{
-                    fontSize: 12,
-                    padding: "2px 8px",
-                    border: "1px solid #ccc",
-                    borderRadius: 999,
-                  }}
-                >
-                  {t}
-                </span>
-              ))}
-            </div>
-            <div style={{ marginTop: 8 }}>
-              <a href={j.url} target="_blank" rel="noreferrer">
-                Apply
-              </a>
-              <span style={{ marginLeft: 12, fontSize: 12, opacity: 0.75 }}>
-                first seen: {j.firstSeen}
-              </span>
-            </div>
-          </div>
-        ))}
-        {jobs.length === 0 && (
-          <div style={{ opacity: 0.7 }}>
-            No jobs yet. Click “Seed fake job”.
-          </div>
-        )}
+          );
+        })}
       </div>
     </div>
   );

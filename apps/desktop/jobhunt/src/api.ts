@@ -2,10 +2,10 @@ import { normalizeConfig } from "./configNormalize";
 
 export const ENGINE_BASE = "http://127.0.0.1:38471";
 
-export async function getJobs() {
-  const res = await fetch(`${ENGINE_BASE}/jobs`);
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
+export async function getJobs(qs?: string) {
+  const r = await fetch(qs ? `${ENGINE_BASE}/jobs?${qs}` : "/jobs");
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
 }
 
 export async function seedJob() {
@@ -56,6 +56,7 @@ export type EngineConfig = {
     keyword_rules: Rule[];
     penalties: Penalty[];
   };
+  email: EngineEmailConfig;
 };
 
 export async function getConfig(): Promise<EngineConfig> {
@@ -81,3 +82,35 @@ export async function deleteJob(id: number) {
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
+
+export type ScrapeStatus = {
+  last_run_at: string;
+  last_ok_at: string;
+  last_error: string;
+  last_added: number;
+  running: boolean;
+};
+
+export async function getScrapeStatus(): Promise<ScrapeStatus> {
+  const res = await fetch(`${ENGINE_BASE}/scrape/status`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function runScrape(): Promise<{ ok: boolean; msg?: string }> {
+  const res = await fetch(`${ENGINE_BASE}/scrape/run`, { method: "POST" });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export type EngineEmailConfig = {
+  enabled: boolean;
+  imap_host: string;
+  imap_port: number;
+  username: string;
+  app_password: string;
+  mailbox: string;
+  search_subject_any: string[];
+};
+
+
