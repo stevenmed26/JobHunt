@@ -79,3 +79,13 @@ email:
     - "Engineer"
     - "Software"
     - "Developer"
+
+sources:
+  greenhouse:
+    enabled: false
+    companies: []
+  lever:
+    enabled: false
+    companies: []
+
+sources_file: "companies.yml"

@@ -3,6 +3,7 @@ package config
 
 import (
 	"os"
+	"path/filepath"
 
 	"gopkg.in/yaml.v3"
 )
@@ -19,14 +20,23 @@ type Penalty struct {
 	Any    []string `yaml:"any" json:"any"`
 }
 
-type ATSCompany struct {
+type Company struct {
 	Slug string `yaml:"slug" json:"slug"`
-	Name string `yaml:"name,omitempty" json:"name,omitempty"`
+	Name string `yaml:"name" json:"name"`
 }
 
-type ATSSource struct {
-	Enabled   bool         `yaml:"enabled" json:"enabled"`
-	Companies []ATSCompany `yaml:"companies" json:"companies"`
+type SourceConfig struct {
+	Enabled   bool      `yaml:"enabled" json:"enabled"`
+	Companies []Company `yaml:"companies" json:"companies"`
+}
+
+type Sources struct {
+	Greenhouse SourceConfig `yaml:"greenhouse" json:"greenhouse"`
+	Lever      SourceConfig `yaml:"lever" json:"lever"`
+}
+
+type CompaniesFile struct {
+	Sources Sources `yaml:"sources" json:"sources"`
 }
 
 type Config struct {
@@ -64,18 +74,55 @@ type Config struct {
 		SearchSubjectAny []string `yaml:"search_subject_any" json:"search_subject_any"`
 	} `yaml:"email" json:"email"`
 
-	Sources struct {
-		Greenhouse ATSSource `yaml:"greenhouse" json:"greenhouse"`
-		Lever      ATSSource `yaml:"lever" json:"lever"`
-	} `yaml:"sources" json:"sources"`
+	Sources     Sources `yaml:"sources" json:"sources"`
+	SourcesFile string  `yaml:"sources_file" json:"sources_file"`
 }
 
 func Load(path string) (Config, error) {
 	var cfg Config
+
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return cfg, err
 	}
-	err = yaml.Unmarshal(b, &cfg)
-	return cfg, err
+	if err := yaml.Unmarshal(b, &cfg); err != nil {
+		return cfg, err
+	}
+
+	// Load companies.yml if configured
+	if cfg.SourcesFile != "" {
+		if err := loadCompaniesFile(path, &cfg); err != nil {
+			return cfg, err
+		}
+	}
+
+	return cfg, nil
+}
+
+func loadCompaniesFile(configPath string, cfg *Config) error {
+	companiesPath := cfg.SourcesFile
+	if !filepath.IsAbs(companiesPath) {
+		companiesPath = filepath.Join(filepath.Dir(configPath), companiesPath)
+	}
+
+	b, err := os.ReadFile(companiesPath)
+	if err != nil {
+		// IMPORTANT: missing companies.yml should NOT break startup
+		return nil
+	}
+
+	var cf CompaniesFile
+	if err := yaml.Unmarshal(b, &cf); err != nil {
+		return err
+	}
+
+	// Replace only company lists, not user settings
+	if len(cf.Sources.Greenhouse.Companies) > 0 {
+		cfg.Sources.Greenhouse.Companies = cf.Sources.Greenhouse.Companies
+	}
+	if len(cf.Sources.Lever.Companies) > 0 {
+		cfg.Sources.Lever.Companies = cf.Sources.Lever.Companies
+	}
+
+	return nil
 }
