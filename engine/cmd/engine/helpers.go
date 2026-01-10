@@ -8,14 +8,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
-	"jobhunt-engine/internal/config"
-	email_scrape "jobhunt-engine/internal/scrape/email"
 	"log"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
-	"sync/atomic"
 	"time"
 )
 
@@ -102,62 +99,6 @@ func handleLogo(w http.ResponseWriter, r *http.Request) {
 func deleteJob(ctx context.Context, db *sql.DB, id int64) error {
 	_, err := db.ExecContext(ctx, `DELETE FROM jobs WHERE id = ?;`, id)
 	return err
-}
-
-func startEmailPoller(db *sql.DB, cfgVal *atomic.Value, scrapeStatus *atomic.Value, hub *eventHub) {
-	go func() {
-		// run forever; interval is read from cfg on each loop so config updates apply live
-		var lastTick time.Time
-
-		for {
-			cfg := cfgVal.Load().(config.Config)
-			sec := cfg.Polling.EmailSeconds
-			if sec <= 0 {
-				sec = 60
-			}
-
-			// sleep until next tick (dynamic interval)
-			if !lastTick.IsZero() {
-				time.Sleep(time.Duration(sec) * time.Second)
-			}
-			lastTick = time.Now()
-
-			if !cfg.Email.Enabled {
-				continue
-			}
-
-			// Prevent concurrent runs (shares the same status guard)
-			st := scrapeStatus.Load().(ScrapeStatus)
-			if st.Running {
-				continue
-			}
-
-			scrapeStatus.Store(ScrapeStatus{
-				LastRunAt: time.Now().Format(time.RFC3339),
-				Running:   true,
-				LastError: "",
-				LastAdded: 0,
-				LastOkAt:  st.LastOkAt,
-			})
-
-			added, err := email_scrape.RunEmailScrapeOnce(db, cfg, func() {
-				hub.publish(`{"type":"job_created"}`)
-			})
-			now := time.Now().Format(time.RFC3339)
-
-			next := scrapeStatus.Load().(ScrapeStatus)
-			next.Running = false
-			next.LastRunAt = now
-			next.LastAdded = added
-			if err != nil {
-				next.LastError = err.Error()
-			} else {
-				next.LastError = ""
-				next.LastOkAt = now
-			}
-			scrapeStatus.Store(next)
-		}
-	}()
 }
 
 func randomToken(n int) (string, error) {

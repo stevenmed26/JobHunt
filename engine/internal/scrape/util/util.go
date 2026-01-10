@@ -1,4 +1,4 @@
-package scrape
+package util
 
 import (
 	"bytes"
@@ -196,7 +196,7 @@ func htmlToText(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
 
-func hashString(s string) string {
+func HashString(s string) string {
 	sum := sha1.Sum([]byte(s))
 	return hex.EncodeToString(sum[:])
 }
@@ -238,5 +238,5 @@ func MakeSourceID(messageID, urlStr, subject, from string) string {
 	} else {
 		base = "from:" + from + "|sub:" + subject + "|url:" + nurl
 	}
-	return hashString(base)
+	return HashString(base)
 }

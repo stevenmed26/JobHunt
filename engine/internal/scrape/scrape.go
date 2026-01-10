@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"jobhunt-engine/internal/domain"
+	"jobhunt-engine/internal/rank"
+	"jobhunt-engine/internal/scrape/util"
 	"strings"
 	"time"
 )
@@ -44,7 +46,7 @@ func InsertJobIfNew(ctx context.Context, db *sql.DB, j JobRow) (bool, error) {
 		j.ReceivedAt = time.Now().UTC()
 	}
 	if j.SourceID == "" {
-		j.SourceID = hashString("url:" + j.URL)
+		j.SourceID = util.HashString("url:" + j.URL)
 	}
 
 	tagsB, _ := json.Marshal(j.Tags)
@@ -82,30 +84,30 @@ WHERE source_id = ?
 	return n > 0, nil
 }
 
-func jobRowFromLead(j domain.JobLead) JobRow {
-	// Date: use PostedAt if present, else now UTC
+func jobRowFromLead(lead domain.JobLead, s rank.YAMLScorer) JobRow {
 	recv := time.Now().UTC()
-	if j.PostedAt != nil && !j.PostedAt.IsZero() {
-		recv = j.PostedAt.UTC()
+	if lead.PostedAt != nil && !lead.PostedAt.IsZero() {
+		recv = lead.PostedAt.UTC()
 	}
 
-	// Use ATSJobID as SourceID (stable, dedupes perfectly)
-	sourceID := strings.TrimSpace(j.ATSJobID)
+	score, tags := s.Score(lead)
+
+	sourceID := strings.TrimSpace(lead.ATSJobID)
 	if sourceID == "" {
-		// fallback handled by InsertJobIfNew (hash(url))
-		sourceID = ""
+		// Match InsertJobIfNew fallback so UPDATEs can find the row
+		sourceID = util.HashString("url:" + strings.TrimSpace(lead.URL))
 	}
 
 	return JobRow{
-		Company:        strings.TrimSpace(j.CompanyName),
-		Title:          strings.TrimSpace(j.Title),
-		Location:       strings.TrimSpace(j.LocationRaw),
-		WorkMode:       strings.TrimSpace(j.WorkMode),
-		URL:            strings.TrimSpace(j.URL),
-		Score:          0,
-		Tags:           nil, // []string{} if your type requires non-nil
+		Company:        strings.TrimSpace(lead.CompanyName),
+		Title:          strings.TrimSpace(lead.Title),
+		Location:       strings.TrimSpace(lead.LocationRaw),
+		WorkMode:       strings.TrimSpace(lead.WorkMode),
+		URL:            strings.TrimSpace(lead.URL),
+		Score:          score,
+		Tags:           tags,
 		ReceivedAt:     recv,
 		SourceID:       sourceID,
-		CompanyLogoURL: "", // ATS scrapers don’t have logos yet
+		CompanyLogoURL: strings.TrimSpace(lead.CompanyLogoURL),
 	}
 }

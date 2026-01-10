@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"jobhunt-engine/internal/domain"
+	"jobhunt-engine/internal/scrape/types"
 )
 
 type Config struct {
@@ -46,16 +49,59 @@ type leverPosting struct {
 	Description string `json:"description"` // html
 }
 
-func (s *Scraper) Fetch(ctx context.Context) ([]domain.JobLead, error) {
-	var out []domain.JobLead
-	for _, co := range s.cfg.Companies {
-		jobs, err := s.fetchCompany(ctx, co)
-		if err != nil {
-			continue
-		}
-		out = append(out, jobs...)
+func (s *Scraper) Fetch(ctx context.Context) (types.ScrapeResult, error) {
+	const workers = 8
+
+	companies := s.cfg.Companies
+	jobsCh := make(chan []domain.JobLead, len(companies))
+	workCh := make(chan Company)
+
+	var wg sync.WaitGroup
+	wg.Add(workers)
+
+	for i := 0; i < workers; i++ {
+		go func() {
+			defer wg.Done()
+			for co := range workCh {
+				cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+				jobs, err := s.fetchCompany(cctx, co)
+				cancel()
+
+				if err != nil {
+					log.Printf("[ats:lever] company=%q slug=%q err=%v", co.Name, co.Slug, err)
+					continue
+				}
+				if len(jobs) > 0 {
+					jobsCh <- jobs
+				}
+			}
+		}()
 	}
-	return out, nil
+
+	go func() {
+		defer close(workCh)
+		for _, co := range companies {
+			select {
+			case <-ctx.Done():
+				return
+			case workCh <- co:
+			}
+		}
+	}()
+
+	wg.Wait()
+	close(jobsCh)
+
+	var out []domain.JobLead
+	for batch := range jobsCh {
+		out = append(out, batch...)
+	}
+
+	log.Printf("[lever] Processed: %d", len(out))
+	return types.ScrapeResult{
+		Source: "lever",
+		Leads:  out,
+	}, nil
 }
 
 func (s *Scraper) fetchCompany(ctx context.Context, co Company) ([]domain.JobLead, error) {

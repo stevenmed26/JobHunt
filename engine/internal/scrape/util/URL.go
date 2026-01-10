@@ -1,4 +1,4 @@
-package scrape
+package util
 
 import (
 	"net/url"

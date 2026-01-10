@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/mail"
+	"os"
 	"strings"
 	"time"
 
@@ -228,11 +230,20 @@ func LogoutAndClose(c *imapclient.Client) {
 	if c == nil {
 		return
 	}
-	// LogoutCommand.Wait() returns only error (not (data, err)).
+
+	// Try LOGOUT, but tolerate common "already closed" cases.
 	if err := c.Logout().Wait(); err != nil {
-		log.Printf("imap logout: %v", err)
+		if !isBenignIMAPCloseErr(err) {
+			log.Printf("imap logout: %v", err)
+		}
 	}
-	_ = c.Close()
+
+	// Always attempt close. Close may also error if already closed.
+	if err := c.Close(); err != nil {
+		if !isBenignIMAPCloseErr(err) {
+			log.Printf("imap close: %v", err)
+		}
+	}
 }
 
 func joinAddrs(addrs []imap.Address) string {
@@ -275,4 +286,55 @@ func parseHeadersFallback(raw []byte) (subject, from, to string, date time.Time)
 
 	_, _ = io.Copy(io.Discard, msg.Body)
 	return
+}
+
+func isBenignIMAPCloseErr(err error) bool {
+	if err == nil {
+		return true
+	}
+
+	// Normalize the most common net errors from canceled/timeouts/closed sockets.
+	s := strings.ToLower(err.Error())
+
+	switch {
+	case strings.Contains(s, "use of closed network connection"):
+		return true
+	case strings.Contains(s, "broken pipe"):
+		return true
+	case strings.Contains(s, "connection reset by peer"):
+		return true
+	case strings.Contains(s, "eof"):
+		return true
+	case strings.Contains(s, "context canceled"):
+		return true
+	case strings.Contains(s, "deadline exceeded"):
+		return true
+	default:
+		return false
+	}
+}
+
+func isClosedConnErr(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	// Typed checks
+	if errors.Is(err, net.ErrClosed) || errors.Is(err, os.ErrClosed) {
+		return true
+	}
+
+	// Unwrap chain
+	for e := err; e != nil; e = errors.Unwrap(e) {
+		if errors.Is(e, net.ErrClosed) || errors.Is(e, os.ErrClosed) {
+			return true
+		}
+	}
+
+	// Fallback string checks (covers many libraries)
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "use of closed network connection") ||
+		strings.Contains(s, "broken pipe") ||
+		strings.Contains(s, "connection reset by peer") ||
+		strings.Contains(s, "eof")
 }

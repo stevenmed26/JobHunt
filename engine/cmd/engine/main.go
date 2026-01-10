@@ -18,7 +18,6 @@ import (
 
 	"jobhunt-engine/internal/config"
 	"jobhunt-engine/internal/scrape"
-	email_scrape "jobhunt-engine/internal/scrape/email"
 	"jobhunt-engine/internal/store"
 
 	_ "modernc.org/sqlite"
@@ -142,8 +141,6 @@ func run() error {
 	}
 
 	hub := newHub()
-
-	startEmailPoller(db, &cfgVal, &scrapeStatus, hub)
 
 	mux := http.NewServeMux()
 
@@ -289,15 +286,14 @@ func run() error {
 		})
 
 		go func() {
-			added, err := email_scrape.RunEmailScrapeOnce(db, cfgVal.Load().(config.Config), func() {
-				hub.publish(`{"type":"job_created"}`)
-			})
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			_, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			defer cancel()
 
-			addedATS, err := scrape.RunATSScrapeOnce(ctx, db, cfgVal.Load().(config.Config))
+			cfg := cfgVal.Load().(config.Config)
 
-			added += addedATS
+			added, err := scrape.PollOnce(db, cfg, func() {
+				hub.publish(`{"type":"job_created"}`)
+			})
 
 			now := time.Now().Format(time.RFC3339)
 
