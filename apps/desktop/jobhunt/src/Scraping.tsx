@@ -1,3 +1,4 @@
+// src/Scraping.tsx
 import { useEffect, useMemo, useState } from "react";
 import { EngineConfig, getConfig, putConfig, getScrapeStatus, runScrape, ScrapeStatus } from "./api";
 import { normalizeConfig } from "./configNormalize";
@@ -31,8 +32,6 @@ export default function Scraping({ onBack }: { onBack: () => void }) {
       const s = await getScrapeStatus();
       setSt(s);
     } catch (e: any) {
-      // Don’t clobber main error if user is editing config;
-      // but do show status failures if nothing else is happening.
       if (!err) setErr(String(e?.message ?? e));
     }
   }
@@ -46,6 +45,7 @@ export default function Scraping({ onBack }: { onBack: () => void }) {
         setErr(String(e?.message ?? e));
       }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // poll status
@@ -75,10 +75,7 @@ export default function Scraping({ onBack }: { onBack: () => void }) {
       setRunningNow(true);
       setErr("");
       const res = await runScrape();
-      if (!res.ok) {
-        setErr(res.msg || "Scrape did not start");
-      }
-      // status will update via polling, but refresh immediately too:
+      if (!res.ok) setErr(res.msg || "Scrape did not start");
       await refreshStatus();
     } catch (e: any) {
       setErr(String(e?.message ?? e));
@@ -90,68 +87,63 @@ export default function Scraping({ onBack }: { onBack: () => void }) {
   const email = useMemo(() => cfg?.email, [cfg]);
 
   return (
-    <div style={{ fontFamily: "system-ui", padding: 16, maxWidth: 1000 }}>
-      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-        <button onClick={onBack}>Back</button>
-        <h2 style={{ margin: 0 }}>Scraping</h2>
-        <div style={{ flex: 1 }} />
+    <div className="app">
+      <div className="pageTop">
+        <button className="btn" onClick={onBack}>
+          Back
+        </button>
+        <h2>Scraping</h2>
+        <div className="spacer" />
 
-        <button onClick={runOnce} disabled={runningNow || st?.running}>
+        <button className="btn btnPrimary" onClick={runOnce} disabled={runningNow || st?.running}>
           {(st?.running || runningNow) ? "Running…" : "Run now"}
         </button>
 
-        <button onClick={save} disabled={saving || !cfg}>
-          {saving ? "Saving…" : "Save email settings"}
+        <button className="btn" onClick={save} disabled={saving || !cfg}>
+          {saving ? "Saving…" : "Save"}
         </button>
       </div>
 
       {err && (
-        <pre style={{ marginTop: 12, color: "crimson", whiteSpace: "pre-wrap" }}>
+        <pre className="error" style={{ whiteSpace: "pre-wrap" }}>
           {err}
         </pre>
       )}
 
-      {/* Status */}
-      <div style={{ marginTop: 16, border: "1px solid #ddd", borderRadius: 10, padding: 12 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <div style={{ fontWeight: 700 }}>Status</div>
-          <div style={{ opacity: 0.75, fontSize: 12 }}>
-            auto-refreshing
-          </div>
-          <div style={{ flex: 1 }} />
-          <button onClick={refreshStatus}>Refresh</button>
+      <div className="settingsPanel">
+        {/* Status */}
+        <div className="sectionHead">Status</div>
+        <div className="kv">
+          <div className="k">Running</div>
+          <div className="v">{String(st?.running ?? false)}</div>
+
+          <div className="k">Last run</div>
+          <div className="v">{fmt(st?.last_run_at)}</div>
+
+          <div className="k">Last success</div>
+          <div className="v">{fmt(st?.last_ok_at)}</div>
+
+          <div className="k">Last added</div>
+          <div className="v">{String(st?.last_added ?? 0)}</div>
+
+          <div className="k">Last error</div>
+          <div className={`v ${st?.last_error ? "bad" : ""}`}>{st?.last_error || "-"}</div>
         </div>
 
-        <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "140px 1fr", gap: 8 }}>
-          <div>Running</div>
-          <div>{String(st?.running ?? false)}</div>
+        <div className="rowLine" />
 
-          <div>Last run</div>
-          <div>{fmt(st?.last_run_at)}</div>
-
-          <div>Last success</div>
-          <div>{fmt(st?.last_ok_at)}</div>
-
-          <div>Last added</div>
-          <div>{String(st?.last_added ?? 0)}</div>
-
-          <div>Last error</div>
-          <div style={{ color: st?.last_error ? "crimson" : "inherit" }}>
-            {st?.last_error || "-"}
-          </div>
-        </div>
-      </div>
-
-      {/* Email settings */}
-      <div style={{ marginTop: 16, border: "1px solid #ddd", borderRadius: 10, padding: 12 }}>
-        <div style={{ fontWeight: 700 }}>Email (IMAP)</div>
+        {/* Email settings */}
+        <div className="sectionHead">Email (IMAP)</div>
 
         {!cfg || !email ? (
-          <div style={{ marginTop: 8, opacity: 0.7 }}>Loading config…</div>
+          <div className="listBox">
+            <div className="small">Loading config…</div>
+          </div>
         ) : (
           <>
-            <label style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 10 }}>
+            <div className="checkRow">
               <input
+                className="checkbox"
                 type="checkbox"
                 checked={email.enabled}
                 onChange={(e) => {
@@ -160,12 +152,15 @@ export default function Scraping({ onBack }: { onBack: () => void }) {
                   setCfg(c);
                 }}
               />
-              Enabled
-            </label>
+              <div>Enabled</div>
+            </div>
 
-            <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "140px 1fr", gap: 10 }}>
-              <div>IMAP Host</div>
+            <div className="rowLine" />
+
+            <div className="formGrid">
+              <div className="formLabel">IMAP Host</div>
               <input
+                className="input"
                 value={email.imap_host}
                 onChange={(e) => {
                   const c = cloneCfg(cfg);
@@ -174,8 +169,9 @@ export default function Scraping({ onBack }: { onBack: () => void }) {
                 }}
               />
 
-              <div>IMAP Port</div>
+              <div className="formLabel">IMAP Port</div>
               <input
+                className="input"
                 type="number"
                 value={email.imap_port}
                 onChange={(e) => {
@@ -185,8 +181,9 @@ export default function Scraping({ onBack }: { onBack: () => void }) {
                 }}
               />
 
-              <div>Mailbox</div>
+              <div className="formLabel">Mailbox</div>
               <input
+                className="input"
                 value={email.mailbox}
                 onChange={(e) => {
                   const c = cloneCfg(cfg);
@@ -195,8 +192,9 @@ export default function Scraping({ onBack }: { onBack: () => void }) {
                 }}
               />
 
-              <div>Username</div>
+              <div className="formLabel">Username</div>
               <input
+                className="input"
                 value={email.username}
                 onChange={(e) => {
                   const c = cloneCfg(cfg);
@@ -205,9 +203,11 @@ export default function Scraping({ onBack }: { onBack: () => void }) {
                 }}
               />
 
-              <div>App Password</div>
+              <div className="formLabel">App Password</div>
               <div style={{ display: "flex", gap: 8 }}>
                 <input
+                  className="input"
+                  style={{ flex: 1 }}
                   type={showPw ? "text" : "password"}
                   value={email.app_password}
                   onChange={(e) => {
@@ -215,31 +215,33 @@ export default function Scraping({ onBack }: { onBack: () => void }) {
                     c.email.app_password = e.target.value;
                     setCfg(c);
                   }}
-                  style={{ flex: 1 }}
                 />
-                <button onClick={() => setShowPw((v) => !v)}>{showPw ? "Hide" : "Show"}</button>
+                <button className="btn miniBtn" onClick={() => setShowPw((v) => !v)}>
+                  {showPw ? "Hide" : "Show"}
+                </button>
               </div>
             </div>
 
-            <div style={{ marginTop: 14 }}>
-              <div style={{ fontWeight: 600 }}>Subject contains any of</div>
-              <div style={{ opacity: 0.75, fontSize: 12 }}>
-                Leave empty to scan broadly; start narrow for MVP.
-              </div>
+            <div className="rowLine" />
 
-              <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+            <div className="listBox">
+              <div className="formLabel">Subject contains any of</div>
+              <div className="help">Leave empty to scan broadly; start narrow for MVP.</div>
+
+              <div className="listStack">
                 {(email.search_subject_any ?? []).map((v, i) => (
-                  <div key={i} style={{ display: "flex", gap: 8 }}>
+                  <div key={i} className="listItem">
                     <input
+                      className="input"
                       value={v}
                       onChange={(e) => {
                         const c = cloneCfg(cfg);
                         c.email.search_subject_any[i] = e.target.value;
                         setCfg(c);
                       }}
-                      style={{ flex: 1 }}
                     />
                     <button
+                      className="btn miniBtn"
                       onClick={() => {
                         const c = cloneCfg(cfg);
                         c.email.search_subject_any.splice(i, 1);
@@ -253,13 +255,14 @@ export default function Scraping({ onBack }: { onBack: () => void }) {
               </div>
 
               <button
+                className="btn miniBtn"
+                style={{ marginTop: 10 }}
                 onClick={() => {
                   const c = cloneCfg(cfg);
                   c.email.search_subject_any = c.email.search_subject_any ?? [];
                   c.email.search_subject_any.push("");
                   setCfg(c);
                 }}
-                style={{ marginTop: 6 }}
               >
                 Add filter
               </button>
@@ -270,5 +273,3 @@ export default function Scraping({ onBack }: { onBack: () => void }) {
     </div>
   );
 }
-
-
