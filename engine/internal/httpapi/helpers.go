@@ -1,6 +1,8 @@
 package httpapi
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 )
@@ -18,4 +20,12 @@ func methodMux(m map[string]http.HandlerFunc) http.HandlerFunc {
 		}
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func RandomToken(n int) (string, error) {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
 }
