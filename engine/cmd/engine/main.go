@@ -6,23 +6,20 @@ import (
 	"crypto/subtle"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
-	"strings"
-	"sync"
 	"time"
 
 	"sync/atomic"
 
 	"jobhunt-engine/internal/config"
+	"jobhunt-engine/internal/events"
+	"jobhunt-engine/internal/httpapi"
+	apirouter "jobhunt-engine/internal/httpapi" // new router + handlers
 	email_scrape "jobhunt-engine/internal/scrape/email"
 	"jobhunt-engine/internal/store"
 
@@ -30,50 +27,6 @@ import (
 
 	"github.com/gofrs/flock"
 )
-
-type ScrapeStatus struct {
-	LastRunAt string `json:"last_run_at"`
-	LastOkAt  string `json:"last_ok_at"`
-	LastError string `json:"last_error"`
-	LastAdded int    `json:"last_added"`
-	Running   bool   `json:"running"`
-}
-
-type eventHub struct {
-	mu      sync.Mutex
-	clients map[chan string]struct{}
-}
-
-func newHub() *eventHub {
-	return &eventHub{clients: make(map[chan string]struct{})}
-}
-
-func (h *eventHub) subscribe() chan string {
-	ch := make(chan string, 10)
-	h.mu.Lock()
-	h.clients[ch] = struct{}{}
-	h.mu.Unlock()
-	return ch
-}
-
-func (h *eventHub) unsubscribe(ch chan string) {
-	h.mu.Lock()
-	delete(h.clients, ch)
-	h.mu.Unlock()
-	close(ch)
-}
-
-func (h *eventHub) publish(evt string) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	for ch := range h.clients {
-		select {
-		case ch <- evt:
-		default:
-			// drop if slow
-		}
-	}
-}
 
 func main() {
 	if err := run(); err != nil {
@@ -109,14 +62,13 @@ func run() error {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	defer func() {
-		_ = lk.Unlock()
-	}()
+	defer func() { _ = lk.Unlock() }()
 
 	userCfgPath, err := config.EnsureUserConfig(dataDir)
 	if err != nil {
 		return fmt.Errorf("config bootstrap failed: %v", err)
 	}
+
 	// Load config and keep it reloadable
 	var cfgVal atomic.Value // stores config.Config
 	loadCfg := func() (config.Config, error) {
@@ -129,16 +81,14 @@ func run() error {
 	cfgVal.Store(cfg)
 
 	// Load scrape status
-	var scrapeStatus atomic.Value // stores ScrapeStatus
-	scrapeStatus.Store(ScrapeStatus{})
-
-	// scorer := func(job domain.JobLead) (int, []string) {
-	// 	c := cfgVal.Load().(config.Config)
-	// 	return rank.YAMLScorer{Cfg: c}.Score(job)
-	// }
+	var scrapeStatus atomic.Value // stores apirouter.ScrapeStatus
+	scrapeStatus.Store(apirouter.ScrapeStatus{})
 
 	dbPath := filepath.Join(dataDir, "jobhunt.db")
 	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return fmt.Errorf("%s", err)
+	}
 	if _, err := db.Exec(`PRAGMA journal_mode=WAL;`); err != nil {
 		log.Printf("WARN: set WAL: %v", err)
 	}
@@ -151,9 +101,6 @@ func run() error {
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 	db.SetConnMaxLifetime(0)
-	if err != nil {
-		return fmt.Errorf("%s", err)
-	}
 	defer db.Close()
 
 	if err := store.Migrate(db); err != nil {
@@ -163,244 +110,25 @@ func run() error {
 		log.Printf("[retention] cleanup failed: %v", err)
 	}
 
-	hub := newHub()
+	// SSE hub lives outside main now (importable by handlers)
+	hub := events.NewHub()
 
+	// Background poller stays in main, but uses shared types + hub
 	startEmailPoller(db, &cfgVal, &scrapeStatus, hub)
 
-	mux := http.NewServeMux()
+	// Build API mux from internal/httpapi package
+	mux := apirouter.NewMux(apirouter.Deps{
+		DB:           db,
+		Hub:          hub,
+		CfgVal:       &cfgVal,
+		ScrapeStatus: &scrapeStatus,
 
-	mux.HandleFunc("/jobs", func(w http.ResponseWriter, r *http.Request) {
-		q := r.URL.Query()
+		UserCfgPath: userCfgPath,
+		LoadCfg:     loadCfg,
 
-		sort := q.Get("sort")     // "score" | "date" | "company" | "title"
-		window := q.Get("window") // "24h" | "7d" | "all"
+		DeleteJob: deleteJob,
 
-		jobs, err := store.ListJobs(r.Context(), db, store.ListJobsOpts{
-			Sort:   sort,
-			Window: window,
-			Limit:  50000,
-		})
-		if err != nil {
-			http.Error(w, err.Error(), 500)
-			return
-		}
-		writeJSON(w, jobs)
-	})
-	mux.HandleFunc("/jobs/", func(w http.ResponseWriter, r *http.Request) {
-		// expects /jobs/{id}
-		if r.Method != http.MethodDelete {
-			http.Error(w, "DELETE only", 405)
-			return
-		}
-
-		idStr := strings.TrimPrefix(r.URL.Path, "/jobs/")
-		id, err := strconv.ParseInt(idStr, 10, 64)
-		if err != nil || id <= 0 {
-			http.Error(w, "invalid id", 400)
-			return
-		}
-
-		if err := deleteJob(r.Context(), db, id); err != nil {
-			http.Error(w, err.Error(), 500)
-			return
-		}
-
-		// Optional: notify UI via SSE so it refreshes
-		hub.publish(`{"type":"job_deleted","id":` + fmt.Sprint(id) + `}`)
-
-		writeJSON(w, map[string]any{"ok": true, "id": id})
-	})
-
-	mux.HandleFunc("/config", func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			cur := cfgVal.Load().(config.Config)
-			writeJSON(w, cur)
-			return
-		case http.MethodPut:
-			// Temporary debug block
-			// b, _ := io.ReadAll(r.Body)
-			// log.Printf("PUT /config raw : %s", string(b))
-
-			dec := json.NewDecoder(r.Body)
-			dec.DisallowUnknownFields()
-
-			var incoming config.Config
-			if err := dec.Decode(&incoming); err != nil {
-				http.Error(w, "invalid JSON: "+err.Error(), 400)
-				return
-			}
-			if dec.More() {
-				http.Error(w, "invalid JSON: trailing data", 400)
-				return
-			}
-
-			// log.Printf("decoded incoming app=%+v", incoming.App)
-			// log.Printf("decoded incoming port=%d data_dir=%q", incoming.App.Port, incoming.App.DataDir)
-
-			if incoming.App.Port == 0 {
-				http.Error(w, "invalid config: app.port missing", 400)
-				return
-			}
-			if incoming.Email.Enabled {
-				if incoming.Email.IMAPHost == "" || incoming.Email.Username == "" {
-					http.Error(w, "invalid config: email enabled but missing host/username", 400)
-					return
-				}
-			}
-
-			if err := config.SaveAtomic(userCfgPath, incoming); err != nil {
-				http.Error(w, err.Error(), 400)
-				return
-			}
-
-			saved, err := loadCfg()
-			if err != nil {
-				http.Error(w, "saved but reload failed: "+err.Error(), 500)
-				return
-			}
-			cfgVal.Store(saved)
-			writeJSON(w, saved)
-			return
-
-		default:
-			http.Error(w, "GET or PUT only", 405)
-			return
-		}
-	})
-	mux.HandleFunc("/config/path", func(w http.ResponseWriter, r *http.Request) {
-		abs, _ := filepath.Abs(userCfgPath)
-		writeJSON(w, map[string]any{"path": abs})
-	})
-	mux.HandleFunc("/scrape/status", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "GET only", 405)
-			return
-		}
-		st := scrapeStatus.Load().(ScrapeStatus)
-		writeJSON(w, st)
-	})
-
-	mux.HandleFunc("/scrape/run", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "POST only", 405)
-			return
-		}
-
-		// prevent concurrent runs
-		st := scrapeStatus.Load().(ScrapeStatus)
-		if st.Running {
-			writeJSON(w, map[string]any{"ok": false, "msg": "already running"})
-			return
-		}
-
-		// run async so request returns quickly
-		scrapeStatus.Store(ScrapeStatus{
-			LastRunAt: time.Now().Format(time.RFC3339),
-			Running:   true,
-			LastError: "",
-			LastAdded: 0,
-			LastOkAt:  st.LastOkAt,
-		})
-
-		go func() {
-			added, err := email_scrape.RunEmailScrapeOnce(db, cfgVal.Load().(config.Config), func() {
-				hub.publish(`{"type":"job_created"}`)
-			})
-			now := time.Now().Format(time.RFC3339)
-
-			next := scrapeStatus.Load().(ScrapeStatus)
-			next.Running = false
-			next.LastRunAt = now
-			next.LastAdded = added
-			if err != nil {
-				next.LastError = err.Error()
-			} else {
-				next.LastError = ""
-				next.LastOkAt = now
-			}
-			scrapeStatus.Store(next)
-		}()
-
-		writeJSON(w, map[string]any{"ok": true})
-	})
-
-	mux.HandleFunc("/seed", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "POST only", 405)
-			return
-		}
-		job, err := store.SeedJob(r.Context(), db)
-		if err != nil {
-			http.Error(w, err.Error(), 500)
-			return
-		}
-		// Emit an SSE event so the UI refreshes instantly.
-		hub.publish(`{"type":"job_created","id":` + fmt.Sprint(job.ID) + `}`)
-		writeJSON(w, job)
-	})
-	mux.HandleFunc("/events", func(w http.ResponseWriter, r *http.Request) {
-		// Server-Sent Events
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("Connection", "keep-alive")
-		w.Header().Set("Access-Control-Allow-Origin", "*") // safe for localhost UI
-
-		flusher, ok := w.(http.Flusher)
-		if !ok {
-			http.Error(w, "streaming unsupported", 500)
-			return
-		}
-
-		ch := hub.subscribe()
-		defer hub.unsubscribe(ch)
-
-		// initial ping
-		fmt.Fprintf(w, "event: ping\ndata: %s\n\n", `{"type":"ping"}`)
-		flusher.Flush()
-
-		for {
-			select {
-			case <-r.Context().Done():
-				return
-			case msg := <-ch:
-				fmt.Fprintf(w, "event: message\ndata: %s\n\n", msg)
-				flusher.Flush()
-			}
-		}
-	})
-	mux.HandleFunc("/logo/", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "GET only", http.StatusMethodNotAllowed)
-			return
-		}
-		key := strings.TrimPrefix(r.URL.Path, "/logo/")
-		key = strings.TrimSpace(key)
-		if key == "" {
-			http.Error(w, "missing key", 400)
-			return
-		}
-
-		var ct string
-		var b []byte
-		err := db.QueryRowContext(r.Context(),
-			`SELECT content_type, bytes FROM logos WHERE key = ? LIMIT 1;`, key,
-		).Scan(&ct, &b)
-		if err == sql.ErrNoRows {
-			http.NotFound(w, r)
-			return
-		}
-		if err != nil {
-			http.Error(w, err.Error(), 500)
-			return
-		}
-
-		if ct == "" {
-			ct = "image/*"
-		}
-		w.Header().Set("Content-Type", ct)
-		w.Header().Set("Cache-Control", "public, max-age=604800") // 7d
-		_, _ = w.Write(b)
+		RunEmailScrape: email_scrape.RunEmailScrapeOnce,
 	})
 
 	// Bind to a predictable local port for now (simpler).
@@ -412,115 +140,20 @@ func run() error {
 	log.Printf("engine listening on http://%s (db=%s)", addr, dbPath)
 
 	srv := &http.Server{
-		Handler:           cors(mux),
+		Handler:           httpapi.Cors(mux),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
+
 	shutdownToken, err := randomToken(32)
 	if err != nil {
 		return err
 	}
 	log.Printf("shutdown_token=%s", shutdownToken)
 
+	// /shutdown must be registered here because it needs srv + token
 	mux.HandleFunc("/shutdown", shutdownHandler(&shutdownToken, srv))
+
 	return fmt.Errorf("%s", srv.Serve(ln))
-}
-
-func cors(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Tauri fetch requests come from "tauri://localhost" origin.
-		origin := r.Header.Get("Origin")
-		if origin != "" {
-			w.Header().Set("Access-Control-Allow-Origin", origin)
-			w.Header().Set("Vary", "Origin")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-			w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS")
-		}
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(204)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-func writeJSON(w http.ResponseWriter, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	_ = enc.Encode(v)
-}
-
-func handleLogo(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "GET only", http.StatusMethodNotAllowed)
-		return
-	}
-
-	u := r.URL.Query().Get("u") // already decoded by net/http
-	if u == "" {
-		http.Error(w, "missing u", http.StatusBadRequest)
-		return
-	}
-
-	// Gmail proxy URLs sometimes look like:
-	// https://ci3.googleusercontent.com/...#https://media.licdn.com/...
-	// The part after # is NOT sent in HTTP requests and often points to licdn (403).
-	// Always drop the fragment and fetch the actual URL.
-	if i := strings.IndexByte(u, '#'); i >= 0 {
-		u = strings.TrimSpace(u[:i])
-	}
-
-	parsed, err := url.Parse(u)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		http.Error(w, "bad url", http.StatusBadRequest)
-		return
-	}
-
-	// allowlist
-	host := strings.ToLower(parsed.Host)
-	allowed := host == "media.licdn.com" ||
-		host == "media-exp1.licdn.com" ||
-		host == "media-exp2.licdn.com" ||
-		strings.HasSuffix(host, ".googleusercontent.com") // Gmail image proxy
-	if !allowed {
-		http.Error(w, "host not allowed", http.StatusForbidden)
-		return
-	}
-
-	req, _ := http.NewRequest(http.MethodGet, u, nil)
-	req.Header.Set("User-Agent", "Mozilla/5.0")
-	req.Header.Set("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
-	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
-
-	// Only set Referer for LinkedIn CDN; setting it for googleusercontent is unnecessary and can hurt.
-	if strings.HasSuffix(host, "licdn.com") {
-		req.Header.Set("Referer", "https://www.linkedin.com/")
-	}
-
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Printf("[logo] fetch failed url=%s err=%v", u, err)
-		http.Error(w, "fetch failed", http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
-		log.Printf("[logo] upstream status=%s url=%s body=%q", resp.Status, u, string(b))
-		http.Error(w, "upstream status: "+resp.Status, http.StatusBadGateway)
-		return
-	}
-
-	ct := resp.Header.Get("Content-Type")
-	if ct == "" {
-		ct = "image/*"
-	}
-	w.Header().Set("Content-Type", ct)
-	w.Header().Set("Cache-Control", "public, max-age=86400")
-
-	_, _ = io.Copy(w, resp.Body)
 }
 
 func deleteJob(ctx context.Context, db *sql.DB, id int64) error {
@@ -528,7 +161,7 @@ func deleteJob(ctx context.Context, db *sql.DB, id int64) error {
 	return err
 }
 
-func startEmailPoller(db *sql.DB, cfgVal *atomic.Value, scrapeStatus *atomic.Value, hub *eventHub) {
+func startEmailPoller(db *sql.DB, cfgVal *atomic.Value, scrapeStatus *atomic.Value, hub *events.Hub) {
 	go func() {
 		// run forever; interval is read from cfg on each loop so config updates apply live
 		var lastTick time.Time
@@ -551,12 +184,12 @@ func startEmailPoller(db *sql.DB, cfgVal *atomic.Value, scrapeStatus *atomic.Val
 			}
 
 			// Prevent concurrent runs (shares the same status guard)
-			st := scrapeStatus.Load().(ScrapeStatus)
+			st := scrapeStatus.Load().(apirouter.ScrapeStatus)
 			if st.Running {
 				continue
 			}
 
-			scrapeStatus.Store(ScrapeStatus{
+			scrapeStatus.Store(apirouter.ScrapeStatus{
 				LastRunAt: time.Now().Format(time.RFC3339),
 				Running:   true,
 				LastError: "",
@@ -565,11 +198,11 @@ func startEmailPoller(db *sql.DB, cfgVal *atomic.Value, scrapeStatus *atomic.Val
 			})
 
 			added, err := email_scrape.RunEmailScrapeOnce(db, cfg, func() {
-				hub.publish(`{"type":"job_created"}`)
+				hub.Publish(`{"type":"job_created"}`)
 			})
 			now := time.Now().Format(time.RFC3339)
 
-			next := scrapeStatus.Load().(ScrapeStatus)
+			next := scrapeStatus.Load().(apirouter.ScrapeStatus)
 			next.Running = false
 			next.LastRunAt = now
 			next.LastAdded = added

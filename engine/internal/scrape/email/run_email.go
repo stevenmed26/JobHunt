@@ -16,6 +16,7 @@ import (
 	"jobhunt-engine/internal/config"
 	"jobhunt-engine/internal/domain"
 	"jobhunt-engine/internal/rank"
+	"jobhunt-engine/internal/secrets"
 	"jobhunt-engine/internal/store"
 
 	"github.com/emersion/go-imap/v2"
@@ -46,6 +47,11 @@ func RunEmailScrapeOnce(db *sql.DB, cfg config.Config, onNewJob func()) (added i
 
 	scorer := rank.YAMLScorer{Cfg: cfg}
 
+	pw, _ := secrets.GetIMAPPassword(cfg.Email.PasswordKeyringAccount, cfg.Email.PasswordEnv)
+	if err != nil {
+		return 0, errors.New("Could not get imap password")
+	}
+
 	if db == nil {
 		return 0, errors.New("db is nil")
 	}
@@ -55,7 +61,7 @@ func RunEmailScrapeOnce(db *sql.DB, cfg config.Config, onNewJob func()) (added i
 	if cfg.Email.IMAPHost == "" || cfg.Email.Username == "" {
 		return 0, errors.New("email enabled but missing imap_host/username")
 	}
-	if cfg.Email.AppPassword == "" {
+	if pw == "" {
 		return 0, errors.New("missing email.app_password (gmail requires an app password with 2FA)")
 	}
 
@@ -74,7 +80,7 @@ func RunEmailScrapeOnce(db *sql.DB, cfg config.Config, onNewJob func()) (added i
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
-	c, err := DialAndLoginIMAP(ctx, addr, cfg.Email.Username, cfg.Email.AppPassword, GmailTLSConfig())
+	c, err := DialAndLoginIMAP(ctx, addr, cfg.Email.Username, pw, GmailTLSConfig())
 	if err != nil {
 		return 0, err
 	}
