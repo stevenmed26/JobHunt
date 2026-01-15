@@ -1,6 +1,5 @@
-// src/Scraping.tsx
-import { useEffect, useMemo, useState } from "react";
-import { EngineConfig, getConfig, putConfig, getScrapeStatus, runScrape, ScrapeStatus } from "./api";
+import { useRef, useEffect, useMemo, useState } from "react";
+import { EngineConfig, getConfig, putConfig, getScrapeStatus, runScrape, ScrapeStatus, setImapPassword } from "./api";
 import { normalizeConfig } from "./configNormalize";
 
 function cloneCfg(cfg: EngineConfig): EngineConfig {
@@ -24,8 +23,34 @@ export default function Scraping({ onBack }: { onBack: () => void }) {
 
   const [err, setErr] = useState("");
   const [saving, setSaving] = useState(false);
-  const [showPw, setShowPw] = useState(false);
+  const [pw, setPw] = useState("");
+  const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [runningNow, setRunningNow] = useState(false);
+
+  const lastSavedRef = useRef<string>("");
+
+  async function saveIfNeeded(next: string) {
+    const trimmed = next.trim();
+
+    if (!trimmed) return;
+
+    if (trimmed === lastSavedRef.current) return;
+
+    try {
+      setStatus("saving");
+      setErr("");
+      await setImapPassword(trimmed);
+      lastSavedRef.current = trimmed;
+
+      setPw("");
+      setStatus("saved");
+
+      window.setTimeout(() => setStatus("idle"), 1500);
+    } catch (e: any) {
+      setStatus("error");
+      setErr(typeof e?.message === "string" ? e.message : String(e));
+    }
+  }
 
   async function refreshStatus() {
     try {
@@ -206,19 +231,24 @@ export default function Scraping({ onBack }: { onBack: () => void }) {
               <div className="formLabel">App Password</div>
               <div style={{ display: "flex", gap: 8 }}>
                 <input
-                  className="input"
-                  style={{ flex: 1 }}
-                  type={showPw ? "text" : "password"}
-                  value={email.app_password}
-                  onChange={(e) => {
-                    const c = cloneCfg(cfg);
-                    c.email.app_password = e.target.value;
-                    setCfg(c);
+                  type="password"
+                  value={pw}
+                  placeholder="Enter app password"
+                  onChange={(e) => setPw(e.target.value)}
+                  onBlur={(e) => saveIfNeeded(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      // Use current state value (or e.currentTarget.value)
+                      void saveIfNeeded(pw);
+                    }
                   }}
                 />
-                <button className="btn miniBtn" onClick={() => setShowPw((v) => !v)}>
-                  {showPw ? "Hide" : "Show"}
-                </button>
+
+                {status === "saving" && <div>Saving…</div>}
+                {status === "saved" && <div>Saved to OS keychain.</div>}
+                {status === "error" && <div style={{ whiteSpace: "pre-wrap" }}>Error: {err}</div>}
+                
               </div>
             </div>
 
