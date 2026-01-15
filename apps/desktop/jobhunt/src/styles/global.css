@@ -200,17 +200,18 @@ select:focus{
   background: transparent;
   display:grid;
   grid-template-columns: 44px 1fr auto;
-  gap: 12px;
-  padding: 12px 14px;
+  gap: 14px;
+  padding: 18px 16px;
   align-items:center;
+  min-height: 88px;
 }
 .listRow + .listRow{
   border-top: 1px solid rgba(255,255,255,0.08);
 }
 
 .logo{
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
   border-radius: 10px;
   background: rgba(255,255,255,0.06);
   border: 1px solid rgba(255,255,255,0.10);
@@ -238,7 +239,7 @@ select:focus{
   text-overflow: ellipsis;
 }
 .jobMeta{
-  margin-top: 2px;
+  margin-top: 4px;
   font-size: 12px;
   color: var(--muted);
   display:flex;
@@ -249,7 +250,7 @@ select:focus{
 
 /* Small, subtle tags */
 .tags{
-  margin-top: 6px;
+  margin-top: 8px;
   display:flex;
   gap:6px;
   flex-wrap:wrap;
