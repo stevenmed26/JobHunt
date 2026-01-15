@@ -14,6 +14,7 @@ import (
 	"jobhunt-engine/internal/domain"
 	"jobhunt-engine/internal/scrape/types"
 	"jobhunt-engine/internal/scrape/util"
+	"jobhunt-engine/internal/secrets"
 
 	"github.com/emersion/go-imap/v2"
 )
@@ -211,7 +212,8 @@ func (e *EmailFetcher) Fetch(ctx context.Context) (types.ScrapeResult, error) {
 	if cfg.Email.IMAPHost == "" || cfg.Email.Username == "" {
 		return types.ScrapeResult{}, errors.New("email enabled but missing imap_host/username")
 	}
-	if cfg.Email.AppPassword == "" {
+	pw, _ := secrets.GetIMAPPassword(cfg.Email.PasswordKeyringAccount, cfg.Email.PasswordEnv)
+	if pw == "" {
 		return types.ScrapeResult{}, errors.New("missing email.app_password (gmail requires an app password with 2FA)")
 	}
 	addr := cfg.Email.IMAPHost
@@ -226,7 +228,7 @@ func (e *EmailFetcher) Fetch(ctx context.Context) (types.ScrapeResult, error) {
 		mailbox = "INBOX"
 	}
 
-	c, err := DialAndLoginIMAP(ctx, addr, cfg.Email.Username, cfg.Email.AppPassword, GmailTLSConfig())
+	c, err := DialAndLoginIMAP(ctx, addr, cfg.Email.Username, pw, GmailTLSConfig())
 	if err != nil {
 		return types.ScrapeResult{}, err
 	}

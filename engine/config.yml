@@ -69,7 +69,7 @@ email:
   imap_host: "imap.gmail.com"
   imap_port: 993
   username: "your@gmail.com"
-  app_password: "xxxx xxxx xxxx xxxx"
+  # Save App Password through OS keychain
   mailbox: "INBOX"
   search_subject_any:
     - "Job alert"
@@ -80,6 +80,10 @@ email:
     - "Software"
     - "Developer"
 
+  password_keyring_account: "imap_app_password"
+
+  password_env: "IMAP_APP_PASSWORD"
+
 sources:
   greenhouse:
     enabled: false
@@ -89,3 +93,4 @@ sources:
     companies: []
 
 sources_file: "companies.yml"
+  

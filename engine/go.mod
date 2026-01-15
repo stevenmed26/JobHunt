@@ -7,15 +7,19 @@ require (
 	github.com/emersion/go-imap/v2 v2.0.0-beta.7
 	github.com/gofrs/flock v0.13.0
 	golang.org/x/sync v0.16.0
+	github.com/zalando/go-keyring v0.2.6
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.42.2
 )
 
 require (
+	al.essio.dev/pkg/shellescape v1.5.1 // indirect
 	github.com/andybalholm/cascadia v1.3.3 // indirect
+	github.com/danieljoos/wincred v1.2.2 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/emersion/go-message v0.18.2 // indirect
 	github.com/emersion/go-sasl v0.0.0-20231106173351-e73c9f7bad43 // indirect
+	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/kr/text v0.2.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect

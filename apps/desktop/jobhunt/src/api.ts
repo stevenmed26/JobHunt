@@ -125,4 +125,14 @@ export type EngineSourcesConfig = {
   lever: { enabled: boolean; companies: SourceCompany[] };
 }
 
+export async function setImapPassword(password: string) {
+  const res = await fetch(`${ENGINE_BASE}/api/secrets/imap`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+}
+
+
 
