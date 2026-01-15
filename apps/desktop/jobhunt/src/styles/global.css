@@ -1,0 +1,479 @@
+:root{
+  --bg: #0b0b0d;
+  --text: rgba(255,255,255,0.92);
+  --muted: rgba(255,255,255,0.62);
+  --hairline: rgba(255,255,255,0.10);
+
+  --panel: rgba(255,255,255,0.06);     /* like macOS sidebar material */
+  --panel2: rgba(255,255,255,0.09);
+
+  --shadow: 0 20px 60px rgba(0,0,0,0.45);
+  --shadowSoft: 0 10px 30px rgba(0,0,0,0.30);
+
+  --r: 16px;
+  --r2: 20px;
+  --focus: rgba(10,132,255,0.45);      /* iOS/macOS blue */
+  --accent: #0a84ff;
+
+  --font: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "SF Pro Display","SF Pro Text","Segoe UI", Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
+}
+
+*{ box-sizing:border-box; }
+html,body{ height:100%; }
+body{
+  margin:0;
+  font-family:var(--font);
+  color:var(--text);
+  background: radial-gradient(900px 500px at 50% -10%, rgba(255,255,255,0.08), transparent 60%),
+              linear-gradient(180deg, #0b0b0d, #0a0a0c 65%, #09090b);
+}
+
+/* App frame */
+.app{
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 22px 18px 28px;
+}
+
+/* Top bar */
+.topbar{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  margin-bottom: 14px;
+}
+.brand{
+  display:flex;
+  flex-direction:column;
+  gap:2px;
+}
+.brand h1{
+  font-size: 24px;
+  font-weight: 680;
+  letter-spacing: -0.02em;
+  margin:0;
+}
+.brand .sub{
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* Segmented controls / pill toolbar */
+.row{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  flex-wrap:wrap;
+}
+
+.toolbar{
+  display:flex;
+  gap:8px;
+  flex-wrap:wrap;
+}
+
+/* Toolbar row at top of jobs list */
+.toolbarRow {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  margin-top: 14px;
+  margin-bottom: 24px;
+}
+
+/* Each control (Sort / Time) */
+.tool {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Label above or beside control */
+.toolLabel {
+  font-size: 12px;
+  opacity: 0.75;
+  min-width: 36px;
+  text-align: right;
+}
+
+
+/* Apple-ish buttons */
+.btn{
+  appearance:none;
+  border: 1px solid var(--hairline);
+  background: rgba(255,255,255,0.05);
+  color: var(--text);
+  padding: 8px 12px;
+  border-radius: 999px;
+  font-size: 13px;
+  line-height: 18px;
+  cursor:pointer;
+  transition: background 120ms ease, transform 60ms ease, border-color 120ms ease;
+}
+.btn:hover{ background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.14); }
+.btn:active{ transform: translateY(1px); }
+
+.btnPrimary{
+  border-color: transparent;
+  background: rgba(10,132,255,0.90);
+  color: white;
+}
+.btnPrimary:hover{ background: rgba(10,132,255,1); }
+
+.iconBtn{
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  border: 1px solid var(--hairline);
+  background: rgba(255,255,255,0.04);
+  color: var(--text);
+  cursor:pointer;
+  opacity:0.72;
+}
+.iconBtn:hover{ opacity:1; background: rgba(255,255,255,0.07); }
+
+/* Selects as “minimal fields” */
+label{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+select{
+  appearance:none;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--hairline);
+  color: var(--text);
+  padding: 8px 12px;
+  border-radius: 999px;
+  outline:none;
+}
+select:focus{
+  border-color: rgba(10,132,255,0.55);
+  box-shadow: 0 0 0 4px rgba(10,132,255,0.18);
+}
+
+/* Main panel (single clean surface) */
+.panel{
+  position: relative;
+  border: 1px solid rgba(255,255,255,0.10);
+  border-radius: var(--r2);
+  box-shadow: var(--shadowSoft);
+  overflow: hidden;
+
+  /* more opaque base so the body gradient doesn't dominate */
+  background: rgba(18,18,20,0.88);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+}
+
+/* soft internal lighting (subtle, not the main “look”) */
+.panel::before{
+  content:"";
+  position:absolute;
+  inset:0;
+  pointer-events:none;
+  z-index:0;
+  background:
+    radial-gradient(1200px 520px at 50% -240px, rgba(255,255,255,0.06), transparent 70%),
+    radial-gradient(1200px 520px at 50% 130%, rgba(255,255,255,0.035), transparent 72%);
+}
+
+/* noise dithering layer — this is what actually kills the “hard line” */
+.panel::after{
+  content:"";
+  position:absolute;
+  inset:0;
+  pointer-events:none;
+  z-index:0;
+  opacity: 0.09;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='.5'/%3E%3C/svg%3E");
+}
+
+/* List rows (Apple list style) */
+.listRow{
+  background: transparent;
+  display:grid;
+  grid-template-columns: 44px 1fr auto;
+  gap: 14px;
+  padding: 18px 16px;
+  align-items:center;
+  min-height: 88px;
+}
+.listRow + .listRow{
+  border-top: 1px solid rgba(255,255,255,0.08);
+}
+
+.logo{
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.10);
+  display:grid;
+  place-items:center;
+  overflow:hidden;
+}
+.logo img{
+  width:100%;
+  height:100%;
+  object-fit: contain;
+  display:block;
+}
+
+.jobMain{
+  min-width: 0;
+}
+.jobTitle{
+  margin:0;
+  font-size: 14px;
+  font-weight: 640;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.jobMeta{
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--muted);
+  display:flex;
+  flex-wrap:wrap;
+  gap: 8px;
+}
+.dot{ opacity: 0.55; }
+
+/* Small, subtle tags */
+.tags{
+  margin-top: 8px;
+  display:flex;
+  gap:6px;
+  flex-wrap:wrap;
+}
+.tag{
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(255,255,255,0.03);
+  color: rgba(255,255,255,0.72);
+}
+
+/* Right side */
+.actions{
+  display:flex;
+  align-items:center;
+  gap:10px;
+}
+.link{
+  color: var(--accent);
+  text-decoration:none;
+  font-size: 13px;
+  font-weight: 600;
+}
+.link:hover{ text-decoration: underline; }
+
+.small{
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* Error */
+.error{
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255, 69, 58, 0.12);
+  border: 1px solid rgba(255, 69, 58, 0.22);
+  color: rgba(255,255,255,0.92);
+}
+
+/* Settings-style layout */
+.pageTop {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.pageTop h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 680;
+  letter-spacing: -0.02em;
+}
+.spacer { flex: 1; }
+
+/* A single "Settings panel" surface */
+.settingsPanel {
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(255,255,255,0.05);
+  border-radius: var(--r2);
+  box-shadow: var(--shadowSoft);
+  overflow: hidden;
+}
+
+/* Section header row inside panel */
+.sectionHead {
+  padding: 12px 14px;
+  font-size: 12px;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  border-top: 1px solid rgba(255,255,255,0.08);
+}
+.sectionHead:first-child { border-top: 0; }
+
+/* Content row: label left, control right */
+.formGrid {
+  display: grid;
+  grid-template-columns: 180px 1fr;
+  gap: 10px 14px;
+  padding: 12px 14px;
+  align-items: center;
+}
+.formLabel {
+  font-size: 13px;
+  color: var(--muted);
+}
+.rowLine {
+  border-top: 1px solid rgba(255,255,255,0.08);
+}
+
+/* Inputs */
+.input {
+  appearance: none;
+  width: 100%;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--hairline);
+  color: var(--text);
+  padding: 8px 12px;
+  border-radius: 12px;
+  outline: none;
+}
+.input:focus {
+  border-color: rgba(10,132,255,0.55);
+  box-shadow: 0 0 0 4px rgba(10,132,255,0.18);
+}
+
+/* Compact rows for lists (terms, subject filters) */
+.listBox {
+  padding: 12px 14px;
+}
+.listStack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+.listItem {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+/* Rule cards become lightweight inline blocks */
+.ruleBox {
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(255,255,255,0.03);
+  border-radius: 16px;
+  padding: 12px;
+}
+.ruleTop {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.ruleTop .right {
+  margin-left: auto;
+}
+.miniBtn {
+  padding: 7px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+}
+
+/* Checkbox row */
+.checkRow {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 12px 14px;
+}
+.checkbox {
+  width: 16px;
+  height: 16px;
+}
+
+/* Small helper text */
+.help {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 4px;
+  line-height: 1.3;
+}
+
+/* Status table look */
+.kv {
+  display: grid;
+  grid-template-columns: 160px 1fr;
+  gap: 8px 14px;
+  padding: 12px 14px;
+}
+.kv .k { color: var(--muted); font-size: 13px; }
+.kv .v { font-size: 13px; }
+.kv .bad { color: rgba(255, 69, 58, 0.9); }
+
+.select { position: relative; }
+.selectBtn{
+  width:100%;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  padding:10px 12px;
+  border-radius:999px;
+  border:1px solid rgba(255,255,255,.12);
+  background:rgba(255,255,255,.06);
+  color:rgba(255,255,255,.92);
+  cursor:pointer;
+  backdrop-filter: blur(10px);
+}
+.selectBtn:hover{ background:rgba(255,255,255,.09); }
+.selectBtn:focus{ outline:none; box-shadow:0 0 0 3px rgba(100,160,255,.25); border-color:rgba(140,190,255,.35); }
+.selectChevron{ opacity:.7; font-size:12px; }
+
+.selectMenu{
+  position:absolute;
+  top:calc(100% + 8px);
+  left:0;
+  width:100%;
+  border-radius:14px;
+  border:1px solid rgba(255,255,255,.14);
+  background:rgba(20,20,22,.92);
+  backdrop-filter: blur(18px);
+  box-shadow: 0 18px 60px rgba(0,0,0,.55);
+  padding:6px;
+  z-index: 1000;
+}
+.selectItem{
+  width:100%;
+  text-align:left;
+  padding:10px 10px;
+  border-radius:10px;
+  border:none;
+  background:transparent;
+  color:rgba(255,255,255,.9);
+  cursor:pointer;
+}
+.selectItem:hover{ background:rgba(255,255,255,.08); }
+.selectItem.active{
+  background:rgba(100,160,255,.18);
+  outline:1px solid rgba(100,160,255,.28);
+}
+
