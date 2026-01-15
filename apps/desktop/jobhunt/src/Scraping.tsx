@@ -231,6 +231,7 @@ export default function Scraping({ onBack }: { onBack: () => void }) {
               <div className="formLabel">App Password</div>
               <div style={{ display: "flex", gap: 8 }}>
                 <input
+                  className="input"
                   type="password"
                   value={pw}
                   placeholder="Enter app password"
@@ -245,9 +246,9 @@ export default function Scraping({ onBack }: { onBack: () => void }) {
                   }}
                 />
 
-                {status === "saving" && <div>Saving…</div>}
-                {status === "saved" && <div>Saved to OS keychain.</div>}
-                {status === "error" && <div style={{ whiteSpace: "pre-wrap" }}>Error: {err}</div>}
+                {status === "saving" && <div className="small">Saving…</div>}
+                {status === "saved" && <div className="small">Saved to OS keychain.</div>}
+                {status === "error" && <div className="small" style={{ whiteSpace: "pre-wrap" }}>Error: {err}</div>}
                 
               </div>
             </div>
