@@ -6,6 +6,7 @@ import Scraping from "./Scraping";
 import Select from "./ui/Select";
 import { Command } from "@tauri-apps/plugin-shell";
 import { check } from "@tauri-apps/plugin-updater";
+import { invoke } from "@tauri-apps/api/core";
 
 async function checkForUpdates() {
   const update = await check();
@@ -16,6 +17,24 @@ async function checkForUpdates() {
   console.log("Update available:", update.version);
 
   await update.downloadAndInstall();
+}
+
+export function ExportDbButton() {
+  return (
+    <button
+      className="btn"
+      onClick={async () => {
+        try {
+          await invoke("export_db");
+          alert("Database exported successfully.");
+        } catch (e) {
+          console.error(e);
+        }
+      }}
+    >
+      Export DB
+    </button>
+  );
 }
 
 async function startEngineDebug() {
@@ -98,6 +117,7 @@ export default function App() {
           Seed
         </button>
         )}
+        <ExportDbButton />
         <button className="btn" onClick={() => setView("prefs")}>Preferences</button>
         <button className="btn" onClick={() => setView("scrape")}>Scraping</button>
       </div>

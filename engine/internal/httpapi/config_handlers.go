@@ -34,18 +34,16 @@ func (h ConfigHandler) Put(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if incoming.App.Port == 0 {
-		http.Error(w, "invalid config: app.port missing", 400)
+	normalized, vr := config.NormalizeAndValidate(incoming)
+	if !vr.OK() {
+		// Return structured errors so the UI can show them nicely
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(vr)
 		return
 	}
-	if incoming.Email.Enabled {
-		if incoming.Email.IMAPHost == "" || incoming.Email.Username == "" {
-			http.Error(w, "invalid config: email enabled but missing host/username", 400)
-			return
-		}
-	}
 
-	if err := config.SaveAtomic(h.UserCfgPath, incoming); err != nil {
+	if err := config.SaveAtomic(h.UserCfgPath, normalized); err != nil {
 		http.Error(w, err.Error(), 400)
 		return
 	}
@@ -62,4 +60,12 @@ func (h ConfigHandler) Put(w http.ResponseWriter, r *http.Request) {
 func (h ConfigHandler) Path(w http.ResponseWriter, r *http.Request) {
 	abs, _ := filepath.Abs(h.UserCfgPath)
 	writeJSON(w, map[string]any{"path": abs})
+}
+
+func (h ConfigHandler) Validate(w http.ResponseWriter, r *http.Request) {
+	cur := h.CfgVal.Load().(config.Config)
+	_, vr := config.NormalizeAndValidate(cur)
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(vr)
 }

@@ -37,6 +37,13 @@ func NewMux(d Deps) *http.ServeMux {
 	mux.HandleFunc("/config/path", methodMux(map[string]http.HandlerFunc{
 		http.MethodGet: ch.Path,
 	}))
+	mux.HandleFunc("/config/validate", methodMux(map[string]http.HandlerFunc{
+		http.MethodGet: ch.Validate,
+	}))
+	dbh := DBHandler{DB: d.DB}
+	mux.HandleFunc("/db/checkpoint", methodMux(map[string]http.HandlerFunc{
+		http.MethodPost: dbh.Checkpoint,
+	}))
 
 	// Secrets (use cfgVal, NOT a snapshot cfg)
 	sh := SecretsHandler{CfgVal: d.CfgVal}
