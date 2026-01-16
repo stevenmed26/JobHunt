@@ -191,6 +191,7 @@ export default function App() {
                 <span>{j.company}</span><span className="dot">·</span>
                 <span>{j.location}</span><span className="dot">·</span>
                 <span>{j.workMode}</span><span className="dot">·</span>
+                <span>{new Date(j.date).toLocaleDateString()}</span><span className="dot">·</span>
                 <span>score {j.score}</span>
               </div>
 
