@@ -30,7 +30,25 @@ type ListJobsOpts struct {
 }
 
 func Migrate(db *sql.DB) error {
-	if _, err := db.Exec(`
+
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var v int
+	if err := tx.QueryRow(`PRAGMA user_version;`).Scan(&v); err != nil {
+		return err
+	}
+
+	if v >= 1 {
+		return tx.Commit()
+	}
+
+	// ---- Schema v1: tables ----
+
+	if _, err := tx.Exec(`
 CREATE TABLE IF NOT EXISTS jobs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   company TEXT NOT NULL,
@@ -41,22 +59,25 @@ CREATE TABLE IF NOT EXISTS jobs (
   score INTEGER NOT NULL DEFAULT 0,
   tags TEXT NOT NULL DEFAULT '[]',
   date TEXT NOT NULL,
+  source_id TEXT NOT NULL DEFAULT '',
   logo_key TEXT NOT NULL DEFAULT ''
-);`); err != nil {
+);
+`); err != nil {
 		return err
 	}
 
-	if _, err := db.Exec(`
+	if _, err := tx.Exec(`
 CREATE TABLE IF NOT EXISTS logos (
   key TEXT PRIMARY KEY,
   content_type TEXT NOT NULL,
   bytes BLOB NOT NULL,
   fetched_at TEXT NOT NULL
-);`); err != nil {
+);
+`); err != nil {
 		return err
 	}
 
-	if _, err := db.Exec(`
+	if _, err := tx.Exec(`
 CREATE TABLE IF NOT EXISTS company_domains (
   company TEXT PRIMARY KEY,
   domain TEXT NOT NULL,
@@ -66,37 +87,23 @@ CREATE TABLE IF NOT EXISTS company_domains (
 		return err
 	}
 
-	// Optional but nice: index by domain too (not required)
-	if _, err := db.Exec(`
+	// ---- Schema v1: indexes ----
+
+	if _, err := tx.Exec(`
 CREATE INDEX IF NOT EXISTS idx_company_domains_domain
 ON company_domains(domain);
 `); err != nil {
 		return err
 	}
 
-	// Does column exist? source_id
-	var one int
-	err := db.QueryRow(`
-SELECT 1
-FROM pragma_table_info('jobs')
-WHERE name = 'source_id'
-LIMIT 1;
-`).Scan(&one)
-
-	has := true
-	if err == sql.ErrNoRows {
-		has = false
-	} else if err != nil {
+	if _, err := tx.Exec(`
+CREATE INDEX IF NOT EXISTS idx_jobs_date
+ON jobs(date);
+`); err != nil {
 		return err
 	}
 
-	if !has {
-		if _, err := db.Exec(`ALTER TABLE jobs ADD COLUMN source_id TEXT NOT NULL DEFAULT '';`); err != nil {
-			return err
-		}
-	}
-
-	if _, err := db.Exec(`
+	if _, err := tx.Exec(`
 CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_source_id
 ON jobs(source_id)
 WHERE source_id != '';
@@ -104,34 +111,41 @@ WHERE source_id != '';
 		return err
 	}
 
-	// Does column exist? logo_key
-	err = db.QueryRow(`
-SELECT 1
-FROM pragma_table_info('jobs')
-WHERE name = 'logo_key'
-LIMIT 1;
-`).Scan(&one)
-
-	hasLogoKey := true
-	if err == sql.ErrNoRows {
-		hasLogoKey = false
-	} else if err != nil {
-		return err
-	}
-
-	if !hasLogoKey {
-		if _, err := db.Exec(`ALTER TABLE jobs ADD COLUMN logo_key TEXT NOT NULL DEFAULT '';`); err != nil {
+	// Back-compat for dev DBs that might predate these columns.
+	// (Technically unnecessary once you rely on user_version properly,
+	// but it's harmless and useful during development.)
+	if !columnExists(tx, "jobs", "source_id") {
+		if _, err := tx.Exec(`ALTER TABLE jobs ADD COLUMN source_id TEXT NOT NULL DEFAULT '';`); err != nil {
 			return err
 		}
 	}
-	if _, err := db.Exec(`
-CREATE INDEX IF NOT EXISTS idx_jobs_date
-ON jobs(date);
-`); err != nil {
+	if !columnExists(tx, "jobs", "logo_key") {
+		if _, err := tx.Exec(`ALTER TABLE jobs ADD COLUMN logo_key TEXT NOT NULL DEFAULT '';`); err != nil {
+			return err
+		}
+	}
+
+	// Mark schema v1
+	if _, err := tx.Exec(`PRAGMA user_version = 1;`); err != nil {
 		return err
 	}
 
-	return nil
+	return tx.Commit()
+}
+
+func columnExists(q interface {
+	QueryRow(query string, args ...any) *sql.Row
+}, table, col string) bool {
+	query := fmt.Sprintf(`
+SELECT 1
+FROM pragma_table_info('%s')
+WHERE name = ?
+LIMIT 1;
+`, table)
+
+	var one int
+	err := q.QueryRow(query, col).Scan(&one)
+	return err == nil
 }
 
 func ListJobs(ctx context.Context, db *sql.DB, opts ListJobsOpts) ([]Job, error) {
