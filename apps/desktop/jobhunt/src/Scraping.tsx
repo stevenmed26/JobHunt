@@ -351,23 +351,28 @@ export default function Scraping({ onBack }: { onBack: () => void }) {
       </div>
 
       {/* ATS Sources (Greenhouse / Lever) */}
-      <div style={{ marginTop: 16, border: "1px solid #ddd", borderRadius: 10, padding: 12 }}>
-        <div style={{ fontWeight: 700 }}>ATS Sources</div>
-        <div style={{ marginTop: 6, opacity: 0.75, fontSize: 12 }}>
-          One per line: <code>slug</code> or <code>slug | Display Name</code>
+      <div className="atsPanel">
+        <div className="atsHead">
+          <div className="atsTitle">ATS Sources</div>
+          <div className="atsHint">
+            One per line: <code>slug</code> or <code>slug | Display Name</code>
+          </div>
         </div>
 
         {!cfg ? (
-          <div style={{ marginTop: 8, opacity: 0.7 }}>Loading config…</div>
+          <div className="listBox">
+            <div className="small">Loading config…</div>
+          </div>
         ) : (
           <>
             {/* Greenhouse */}
-            <div style={{ marginTop: 12 }}>
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <div style={{ fontWeight: 600 }}>Greenhouse</div>
-                <div style={{ flex: 1 }} />
-                <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <div className="atsSection">
+              <div className="atsRowTop">
+                <div className="atsName">Greenhouse</div>
+                <div className="spacer" />
+                <label className="checkInline">
                   <input
+                    className="checkbox"
                     type="checkbox"
                     checked={!!sources?.greenhouse?.enabled}
                     onChange={(e) => {
@@ -382,34 +387,26 @@ export default function Scraping({ onBack }: { onBack: () => void }) {
                 </label>
               </div>
 
-              <div style={{ marginTop: 6, opacity: 0.75, fontSize: 12 }}>
+              <div className="help">
                 Example: <code>boards.greenhouse.io/stripe</code> → slug <code>stripe</code>
               </div>
 
               <textarea
+                className="atsTextarea"
                 value={ghText}
                 onChange={(e) => setGhText(e.target.value)}
                 placeholder={"stripe | Stripe\ncoinbase | Coinbase"}
-                style={{
-                  width: "100%",
-                  marginTop: 8,
-                  minHeight: 88,
-                  border: "1px solid #ccc",
-                  borderRadius: 10,
-                  padding: 10,
-                  fontSize: 12,
-                  fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-                }}
               />
             </div>
 
             {/* Lever */}
-            <div style={{ marginTop: 14 }}>
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <div style={{ fontWeight: 600 }}>Lever</div>
-                <div style={{ flex: 1 }} />
-                <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <div className="atsSection">
+              <div className="atsRowTop">
+                <div className="atsName">Lever</div>
+                <div className="spacer" />
+                <label className="checkInline">
                   <input
+                    className="checkbox"
                     type="checkbox"
                     checked={!!sources?.lever?.enabled}
                     onChange={(e) => {
@@ -424,29 +421,16 @@ export default function Scraping({ onBack }: { onBack: () => void }) {
                 </label>
               </div>
 
-              <div style={{ marginTop: 6, opacity: 0.75, fontSize: 12 }}>
+              <div className="help">
                 Example: <code>jobs.lever.co/airtable</code> → slug <code>airtable</code>
               </div>
 
               <textarea
+                className="atsTextarea"
                 value={leverText}
                 onChange={(e) => setLeverText(e.target.value)}
                 placeholder={"airtable | Airtable\nzapier | Zapier"}
-                style={{
-                  width: "100%",
-                  marginTop: 8,
-                  minHeight: 88,
-                  border: "1px solid #ccc",
-                  borderRadius: 10,
-                  padding: 10,
-                  fontSize: 12,
-                  fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-                }}
               />
-            </div>
-
-            <div style={{ marginTop: 10, opacity: 0.75, fontSize: 12 }}>
-              Note: company lists are saved when you click <b>Save email settings</b> (we’ll rename this later).
             </div>
           </>
         )}

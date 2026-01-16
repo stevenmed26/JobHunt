@@ -26,6 +26,14 @@ type JobRow struct {
 	CompanyLogoURL string
 }
 
+type ScrapeStatus struct {
+	LastRunAt string `json:"last_run_at"`
+	LastOkAt  string `json:"last_ok_at"`
+	LastError string `json:"last_error"`
+	LastAdded int    `json:"last_added"`
+	Running   bool   `json:"running"`
+}
+
 func InsertJobIfNew(ctx context.Context, db *sql.DB, j JobRow) (bool, error) {
 	if j.Company == "" {
 		j.Company = "Unknown"

@@ -26,5 +26,5 @@ type Deps struct {
 	DeleteJob func(ctx context.Context, db *sql.DB, id int64) error
 
 	// Scrape entrypoint (inject for testability)
-	RunEmailScrape func(db *sql.DB, cfg config.Config, onNewJob func()) (added int, err error)
+	RunPollOnce func(db *sql.DB, cfg config.Config, onNewJob func()) (added int, err error)
 }

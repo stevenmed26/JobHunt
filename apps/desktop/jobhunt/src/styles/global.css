@@ -477,3 +477,96 @@ select:focus{
   outline:1px solid rgba(100,160,255,.28);
 }
 
+/* ATS Sources panel (matches settingsPanel look) */
+.atsPanel{
+  margin-top: 16px;
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(255,255,255,0.05);
+  border-radius: var(--r2);
+  box-shadow: var(--shadowSoft);
+  overflow: hidden;
+}
+
+.atsHead{
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+
+.atsTitle{
+  font-size: 13px;
+  font-weight: 680;
+  letter-spacing: -0.01em;
+}
+
+.atsHint{
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.3;
+}
+.atsHint code{
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(255,255,255,0.04);
+  color: rgba(255,255,255,0.88);
+}
+
+.atsSection{
+  padding: 12px 14px;
+}
+.atsSection + .atsSection{
+  border-top: 1px solid rgba(255,255,255,0.08);
+}
+
+.atsRowTop{
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.atsName{
+  font-size: 13px;
+  font-weight: 640;
+  letter-spacing: -0.01em;
+}
+
+.checkInline{
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.atsTextarea{
+  width: 100%;
+  margin-top: 10px;
+  min-height: 110px; /* a bit taller than your 88 */
+  resize: vertical;
+
+  font-size: 12px;
+  line-height: 1.35;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  color: var(--text);
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 14px;
+  padding: 10px 12px;
+  outline: none;
+}
+
+.atsTextarea::placeholder{
+  color: rgba(255,255,255,0.40);
+}
+
+.atsTextarea:focus{
+  border-color: rgba(10,132,255,0.55);
+  box-shadow: 0 0 0 4px rgba(10,132,255,0.18);
+}
+
+

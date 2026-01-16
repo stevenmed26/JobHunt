@@ -1,9 +1,10 @@
-package scrape
+package poll
 
 import (
 	"context"
 	"database/sql"
 	"jobhunt-engine/internal/config"
+	"jobhunt-engine/internal/scrape"
 	email_scrape "jobhunt-engine/internal/scrape/email"
 	"jobhunt-engine/internal/scrape/greenhouse"
 	"jobhunt-engine/internal/scrape/lever"
@@ -21,11 +22,11 @@ func PollOnce(db *sql.DB, cfg config.Config, onNewJob func()) (added int, err er
 	var fetchers []types.Fetcher
 
 	if cfg.Sources.Greenhouse.Enabled {
-		gh := greenhouse.New(greenhouse.Config{Companies: mapGreenhouseCompanies(cfg.Sources.Greenhouse.Companies)})
+		gh := greenhouse.New(greenhouse.Config{Companies: scrape.MapGreenhouseCompanies(cfg.Sources.Greenhouse.Companies)})
 		fetchers = append(fetchers, gh)
 	}
 	if cfg.Sources.Lever.Enabled {
-		lv := lever.New(lever.Config{Companies: mapLeverCompanies(cfg.Sources.Lever.Companies)})
+		lv := lever.New(lever.Config{Companies: scrape.MapLeverCompanies(cfg.Sources.Lever.Companies)})
 		fetchers = append(fetchers, lv)
 	}
 	if cfg.Email.Enabled {
@@ -78,7 +79,7 @@ func PollOnce(db *sql.DB, cfg config.Config, onNewJob func()) (added int, err er
 		log.Printf("[poll] got source=%s leads=%d finalize=%v",
 			res.Source, len(res.Leads), res.Finalize != nil)
 		if len(res.Leads) > 0 {
-			added := ProcessLeads(insertCtx, db, cfg, res.Leads, onNewJob)
+			added := scrape.ProcessLeads(insertCtx, db, cfg, res.Leads, onNewJob)
 			totalAdded += added
 		}
 
@@ -88,26 +89,4 @@ func PollOnce(db *sql.DB, cfg config.Config, onNewJob func()) (added int, err er
 	}
 
 	return totalAdded, nil
-}
-
-func mapGreenhouseCompanies(in []config.Company) []greenhouse.Company {
-	out := make([]greenhouse.Company, 0, len(in))
-	for _, c := range in {
-		out = append(out, greenhouse.Company{
-			Slug: c.Slug,
-			Name: c.Name,
-		})
-	}
-	return out
-}
-
-func mapLeverCompanies(in []config.Company) []lever.Company {
-	out := make([]lever.Company, 0, len(in))
-	for _, c := range in {
-		out = append(out, lever.Company{
-			Slug: c.Slug,
-			Name: c.Name,
-		})
-	}
-	return out
 }

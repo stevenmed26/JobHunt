@@ -15,8 +15,8 @@ import (
 	"jobhunt-engine/internal/config"
 	"jobhunt-engine/internal/events"
 	"jobhunt-engine/internal/httpapi"
-	apirouter "jobhunt-engine/internal/httpapi" // new router + handlers
-	email_scrape "jobhunt-engine/internal/scrape/email"
+	"jobhunt-engine/internal/poll"
+	"jobhunt-engine/internal/scrape"
 	"jobhunt-engine/internal/store"
 
 	_ "modernc.org/sqlite"
@@ -64,8 +64,13 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("config bootstrap failed: %v", err)
 	}
+	userCompaniesPath, err := config.EnsureUserCompaniesConfig(dataDir)
+	if err != nil {
+		return fmt.Errorf("config bootstrap failed: %v", err)
+	}
 	// Load config and keep it reloadable
 	var cfgVal atomic.Value // stores config.Config
+
 	loadCfg := func() (config.Config, error) {
 		cfg, err := config.Load(userCfgPath)
 		if err != nil {
@@ -91,8 +96,8 @@ func run() error {
 	cfgVal.Store(cfg)
 
 	// Load scrape status
-	var scrapeStatus atomic.Value // stores apirouter.ScrapeStatus
-	scrapeStatus.Store(apirouter.ScrapeStatus{})
+	var scrapeStatus atomic.Value // stores scrape.ScrapeStatus
+	scrapeStatus.Store(scrape.ScrapeStatus{})
 
 	dbPath := filepath.Join(dataDir, "jobhunt.db")
 	db, err := sql.Open("sqlite", dbPath)
@@ -124,10 +129,10 @@ func run() error {
 	hub := events.NewHub()
 
 	// Background poller stays in main, but uses shared types + hub
-	startEmailPoller(db, &cfgVal, &scrapeStatus, hub)
+	poll.StartPoller(db, &cfgVal, &scrapeStatus, hub)
 
 	// Build API mux from internal/httpapi package
-	mux := apirouter.NewMux(apirouter.Deps{
+	mux := httpapi.NewMux(httpapi.Deps{
 		DB:           db,
 		Hub:          hub,
 		CfgVal:       &cfgVal,
@@ -138,7 +143,7 @@ func run() error {
 
 		DeleteJob: deleteJob,
 
-		RunEmailScrape: email_scrape.RunEmailScrapeOnce,
+		RunPollOnce: poll.PollOnce,
 	})
 
 	// Bind to a predictable local port for now (simpler).
