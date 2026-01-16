@@ -5,6 +5,7 @@ use std::sync::Mutex;
 use tauri::{Manager, WindowEvent};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
+use tauri_plugin_dialog::DialogExt;
 
 #[derive(Default)]
 struct EngineInfo {
@@ -57,6 +58,8 @@ fn main() {
   tauri::Builder::default()
     .plugin(tauri_plugin_updater::Builder::new().build())
     .plugin(tauri_plugin_shell::init())
+    .plugin(tauri_plugin_dialog::init())
+    .invoke_handler(tauri::generate_handler![export_db])
     .manage(EngineState {
       child: Mutex::new(None),
       info: Mutex::new(EngineInfo::default()),
@@ -127,12 +130,11 @@ fn main() {
         let app_handle = window.app_handle().clone();
         let label = window.label().to_string();
 
-        // If we're already closing (programmatic close), don't block it again.
         {
           let state = app_handle.state::<EngineState>();
-          let allow = state.allow_close.lock().unwrap();
-          if *allow {
-            return; // let Tauri close normally
+          let already_allowed = *state.allow_close.lock().unwrap();
+          if already_allowed {
+            return;
           }
           api.prevent_close();
         }
@@ -183,3 +185,38 @@ fn main() {
     .run(tauri::generate_context!())
     .expect("error while running tauri app");
 }
+
+#[tauri::command]
+async fn export_db(app: tauri::AppHandle) -> Result<String, String> {
+  // Blocking save dialog (works well inside a command)
+  let file_path = app
+    .dialog()
+    .file()
+    .set_title("Export JobHunt database")
+    .set_file_name("jobhunt.db")
+    .blocking_save_file()
+    .ok_or("Export cancelled")?;
+
+  // Convert FilePath -> PathBuf (handles file:// URIs too)
+  let dest = file_path.into_path().map_err(|e| e.to_string())?;
+
+  // Best-effort checkpoint WAL
+  let port = app.state::<EngineState>().info.lock().unwrap().port;
+  if let Some(p) = port {
+    let url = format!("http://127.0.0.1:{}/db/checkpoint", p);
+    let _ = reqwest::Client::new().post(url).send().await;
+  }
+
+  // Copy DB file from app data dir
+  let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+  let src = data_dir.join("jobhunt.db");
+
+  if !src.exists() {
+    return Err("DB file not found yet".into());
+  }
+
+  std::fs::copy(&src, &dest).map_err(|e| e.to_string())?;
+
+  Ok(dest.to_string_lossy().to_string())
+}
+

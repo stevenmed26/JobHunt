@@ -81,6 +81,14 @@ func run() error {
 			return cfg, fmt.Errorf("load companies (%s): %w", userCompaniesPath, err)
 		}
 
+		cfg, vr := config.NormalizeAndValidate(cfg)
+		if !vr.OK() {
+			log.Printf("[config] INVALID: %v", vr.Errors)
+		}
+		for _, w := range vr.Warnings {
+			log.Printf("[config] WARN: %s", w)
+		}
+
 		log.Printf("[config] GH=%d Lever=%d companiesPath=%s",
 			len(cfg.Sources.Greenhouse.Companies),
 			len(cfg.Sources.Lever.Companies),

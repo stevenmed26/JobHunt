@@ -199,9 +199,6 @@ func FetchUnseen(ctx context.Context, c *imapclient.Client, max int) ([]EmailMes
 	return out, nil
 }
 
-// MarkSeen sets the \Seen flag for a UID set.
-// NOTE: In go-imap v2, Store takes (numSet, storeFlags, options) and returns a *FetchCommand.
-// There is no Wait(); you Close() the command to get the final status.
 func MarkSeen(c *imapclient.Client, uids []imap.UID) error {
 	if c == nil {
 		return errors.New("imap client is nil")

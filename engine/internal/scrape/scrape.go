@@ -23,6 +23,7 @@ type JobRow struct {
 	Tags           []string
 	ReceivedAt     time.Time
 	SourceID       string
+	SeenFromSource string
 	CompanyLogoURL string
 }
 
@@ -42,10 +43,10 @@ func InsertJobIfNew(ctx context.Context, db *sql.DB, j JobRow) (bool, error) {
 		j.Title = "Job Posting"
 	}
 	if j.Location == "" {
-		j.Location = "unknown"
+		j.Location = "Unknown"
 	}
 	if j.WorkMode == "" {
-		j.WorkMode = "unknown"
+		j.WorkMode = "Unknown"
 	}
 	if j.URL == "" {
 		return false, errors.New("missing url")
@@ -60,8 +61,8 @@ func InsertJobIfNew(ctx context.Context, db *sql.DB, j JobRow) (bool, error) {
 	tagsB, _ := json.Marshal(j.Tags)
 
 	res, err := db.ExecContext(ctx, `
-INSERT OR IGNORE INTO jobs(company, title, location, work_mode, url, score, tags, date, source_id, logo_key)
-VALUES(?,?,?,?,?,?,?,?,?,?);`,
+INSERT OR IGNORE INTO jobs(company, title, location, work_mode, url, score, tags, date, source_id, seen_from_source, logo_key)
+VALUES(?,?,?,?,?,?,?,?,?,?,?);`,
 		j.Company,
 		j.Title,
 		j.Location,
@@ -71,6 +72,7 @@ VALUES(?,?,?,?,?,?,?,?,?,?);`,
 		string(tagsB),
 		j.ReceivedAt.Format(time.RFC3339),
 		j.SourceID,
+		j.SeenFromSource,
 		j.CompanyLogoURL,
 	)
 	if err != nil {
@@ -116,6 +118,7 @@ func jobRowFromLead(lead domain.JobLead, s rank.YAMLScorer) JobRow {
 		Tags:           tags,
 		ReceivedAt:     recv,
 		SourceID:       sourceID,
+		SeenFromSource: strings.TrimSpace(lead.FirstSeenSource),
 		CompanyLogoURL: strings.TrimSpace(lead.CompanyLogoURL),
 	}
 }

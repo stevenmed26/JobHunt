@@ -25,7 +25,7 @@ func (h SecretsHandler) SetIMAPPassword(w http.ResponseWriter, r *http.Request) 
 	}
 
 	cfg := h.CfgVal.Load().(config.Config)
-	if err := secrets.SetIMAPPassword(cfg.Email.PasswordKeyringAccount, req.Password); err != nil {
+	if err := secrets.SetIMAPPassword(secrets.IMAPKeyringAccount(cfg), req.Password); err != nil {
 		http.Error(w, "failed to store password: "+err.Error(), http.StatusBadRequest)
 		return
 	}

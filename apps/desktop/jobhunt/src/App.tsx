@@ -6,6 +6,7 @@ import Scraping from "./Scraping";
 import Select from "./ui/Select";
 import { Command } from "@tauri-apps/plugin-shell";
 import { check } from "@tauri-apps/plugin-updater";
+import { invoke } from "@tauri-apps/api/core";
 
 async function checkForUpdates() {
   const update = await check();
@@ -16,6 +17,24 @@ async function checkForUpdates() {
   console.log("Update available:", update.version);
 
   await update.downloadAndInstall();
+}
+
+export function ExportDbButton() {
+  return (
+    <button
+      className="btn"
+      onClick={async () => {
+        try {
+          await invoke("export_db");
+          alert("Database exported successfully.");
+        } catch (e) {
+          console.error(e);
+        }
+      }}
+    >
+      Export DB
+    </button>
+  );
 }
 
 async function startEngineDebug() {
@@ -36,6 +55,7 @@ type Job = {
   score: number;
   tags: string[];
   date: string;
+  seenFromSource?: string;
   companyLogoURL?: string;
 };
 
@@ -98,6 +118,7 @@ export default function App() {
           Seed
         </button>
         )}
+        <ExportDbButton />
         <button className="btn" onClick={() => setView("prefs")}>Preferences</button>
         <button className="btn" onClick={() => setView("scrape")}>Scraping</button>
       </div>
@@ -168,17 +189,22 @@ export default function App() {
             <div className="jobMain">
               <p className="jobTitle" title={j.title}>{j.title}</p>
               <div className="jobMeta">
-                <span>{j.company}</span><span className="dot">·</span>
+                <span className="company">{j.company}</span><span className="dot">·</span>
                 <span>{j.location}</span><span className="dot">·</span>
                 <span>{j.workMode}</span><span className="dot">·</span>
+                <span>{new Date(j.date).toLocaleDateString()}</span><span className="dot">·</span>
                 <span>score {j.score}</span>
               </div>
 
-              {!!j.tags?.length && (
+              {(j.tags?.length || j.seenFromSource) && (
                 <div className="tags">
-                  {j.tags.slice(0, 6).map((t) => (
+                  {j.tags?.slice(0, 6).map((t) => (
                     <span key={t} className="tag">{t}</span>
                   ))}
+
+                  {j.seenFromSource && (
+                    <span className="tag tagSource">{j.seenFromSource}</span>
+                  )}
                 </div>
               )}
             </div>

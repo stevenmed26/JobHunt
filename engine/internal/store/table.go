@@ -18,6 +18,7 @@ type Job struct {
 	Score          int      `json:"score"`
 	Tags           []string `json:"tags"`
 	Date           string   `json:"date"`
+	SeenFromSource string   `json:"seenFromSource"`
 	CompanyLogoURL string   `json:"companyLogoURL"`
 	LogoKey        string   `json:"logoKey"`
 }
@@ -60,6 +61,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   tags TEXT NOT NULL DEFAULT '[]',
   date TEXT NOT NULL,
   source_id TEXT NOT NULL DEFAULT '',
+  seen_from_source TEST NOT NULL DEFAULT '',
   logo_key TEXT NOT NULL DEFAULT ''
 );
 `); err != nil {
@@ -195,7 +197,7 @@ func ListJobs(ctx context.Context, db *sql.DB, opts ListJobsOpts) ([]Job, error)
 	}
 
 	query := fmt.Sprintf(`
-SELECT id, company, title, location, work_mode, url, score, tags, date, logo_key
+SELECT id, company, title, location, work_mode, url, score, tags, date, seen_from_source, logo_key
 FROM jobs
 %s
 ORDER BY %s %s
@@ -224,6 +226,7 @@ LIMIT ?;
 			&j.Score,
 			&tagsJSON,
 			&dateStr,
+			&j.SeenFromSource,
 			&j.LogoKey,
 		); err != nil {
 			return nil, err
@@ -249,20 +252,21 @@ LIMIT ?;
 
 func SeedJob(ctx context.Context, db *sql.DB) (Job, error) {
 	j := Job{
-		Company:  "SeedCo",
-		Title:    "SRE / Platform Engineer (DFW or Remote)",
-		Location: "Dallas-Fort Worth, TX",
-		WorkMode: "remote",
-		URL:      "https://example.com/apply",
-		Score:    88,
-		Tags:     []string{"SRE", "Kubernetes", "Terraform", "AWS", "Go"},
-		Date:     time.Now().UTC().Format("2006-01-02 15:04:05"),
+		Company:        "SeedCo",
+		Title:          "SRE / Platform Engineer (DFW or Remote)",
+		Location:       "Dallas-Fort Worth, TX",
+		WorkMode:       "remote",
+		URL:            "https://example.com/apply",
+		Score:          88,
+		Tags:           []string{"SRE", "Kubernetes", "Terraform", "AWS", "Go"},
+		Date:           time.Now().UTC().Format("2006-01-02 15:04:05"),
+		SeenFromSource: "Seed",
 	}
 	tagsB, _ := json.Marshal(j.Tags)
 	res, err := db.ExecContext(ctx, `
-INSERT INTO jobs(company, title, location, work_mode, url, score, tags, date)
-VALUES(?,?,?,?,?,?,?,?);`,
-		j.Company, j.Title, j.Location, j.WorkMode, j.URL, j.Score, string(tagsB), j.Date)
+INSERT INTO jobs(company, title, location, work_mode, url, score, tags, date, seen_from_source)
+VALUES(?,?,?,?,?,?,?,?,?);`,
+		j.Company, j.Title, j.Location, j.WorkMode, j.URL, j.Score, string(tagsB), j.Date, j.SeenFromSource)
 	if err != nil {
 		return Job{}, err
 	}
