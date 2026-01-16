@@ -1,38 +1,40 @@
 package config
 
 import (
-	"errors"
-	"io"
 	"os"
 	"path/filepath"
 )
 
-func EnsureUserConfig(dataDir string, defaultPath string) (string, error) {
-	userPath := filepath.Join(dataDir, "config.yml")
+func EnsureUserConfig(dataDir string) (string, error) {
+	userCfgPath := filepath.Join(dataDir, "config.yml")
 
-	_, err := os.Stat(userPath)
-	if err == nil {
-		return userPath, nil
-	}
-	if !errors.Is(err, os.ErrNotExist) {
-		return "", err
+	// If user config already exists, keep it.
+	if _, err := os.Stat(userCfgPath); err == nil {
+		return userCfgPath, nil
 	}
 
-	// Copy defaultPath -> userPath
-	src, err := os.Open(defaultPath)
-	if err != nil {
+	// Otherwise write embedded default config.
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return "", err
 	}
-	defer src.Close()
+	if err := os.WriteFile(userCfgPath, DefaultYAML, 0o644); err != nil {
+		return "", err
+	}
+	return userCfgPath, nil
+}
 
-	dst, err := os.Create(userPath)
-	if err != nil {
-		return "", err
-	}
-	defer dst.Close()
+func EnsureUserCompaniesConfig(dataDir string) (string, error) {
+	path := filepath.Join(dataDir, "companies.yml")
 
-	if _, err := io.Copy(dst, src); err != nil {
+	if _, err := os.Stat(path); err == nil {
+		return path, nil
+	}
+
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return "", err
 	}
-	return userPath, nil
+	if err := os.WriteFile(path, DefaultCompaniesYAML, 0o644); err != nil {
+		return "", err
+	}
+	return path, nil
 }

@@ -1,22 +1,222 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use tauri::{Manager};
+use std::sync::Mutex;
+
+use tauri::{Manager, WindowEvent};
+use tauri_plugin_shell::process::{CommandChild, CommandEvent};
+use tauri_plugin_shell::ShellExt;
+use tauri_plugin_dialog::DialogExt;
+
+#[derive(Default)]
+struct EngineInfo {
+  port: Option<u16>,
+  shutdown_token: Option<String>,
+}
+
+struct EngineState {
+  child: Mutex<Option<CommandChild>>,
+  info: Mutex<EngineInfo>,
+  allow_close: Mutex<bool>,
+}
+
+fn parse_port_from_line(line: &str) -> Option<u16> {
+  let needle = "http://127.0.0.1:";
+  let idx = line.find(needle)? + needle.len();
+  let rest = &line[idx..];
+  let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+  if digits.is_empty() {
+    return None;
+  }
+  digits.parse::<u16>().ok()
+}
+
+fn parse_shutdown_token_from_line(line: &str) -> Option<String> {
+  let needle = "shutdown_token=";
+  let idx = line.find(needle)? + needle.len();
+  Some(line[idx..].trim().to_string())
+}
+
+async fn request_engine_shutdown(port: u16, token: &str) -> Result<(), String> {
+  let url = format!("http://127.0.0.1:{}/shutdown", port);
+
+  let client = reqwest::Client::new();
+  let resp = client
+    .post(url)
+    .header("X-Shutdown-Token", token)
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+
+  if resp.status().is_success() {
+    Ok(())
+  } else {
+    Err(format!("shutdown returned HTTP {}", resp.status()))
+  }
+}
 
 fn main() {
   tauri::Builder::default()
-    .plugin(tauri_plugin_opener::init())
+    .plugin(tauri_plugin_updater::Builder::new().build())
     .plugin(tauri_plugin_shell::init())
+    .plugin(tauri_plugin_dialog::init())
+    .invoke_handler(tauri::generate_handler![export_db])
+    .manage(EngineState {
+      child: Mutex::new(None),
+      info: Mutex::new(EngineInfo::default()),
+      allow_close: Mutex::new(false),
+    })
     .setup(|app| {
-      // If you want to spawn the sidecar immediately, do it here.
-      // NOTE: In Tauri v2, it's usually best to call sidecars from JS via the shell plugin,
-      // but you *can* trigger it here too if you prefer.
+      let data_dir = app.path().app_data_dir().expect("app_data_dir");
+      std::fs::create_dir_all(&data_dir).expect("create data dir");
 
-      // Example: just log that setup ran
-      let _window = app.get_webview_window("main").unwrap();
+      let mut cmd = app
+        .shell()
+        .sidecar("engine")
+        .expect("failed to create sidecar");
+
+      cmd = cmd
+        .current_dir(&data_dir)
+        .env("JOBHUNT_DATA_DIR", data_dir.to_string_lossy().to_string());
+
+      let (mut rx, child) = cmd.spawn().expect("failed to spawn engine");
+
+      // store child
+      app.state::<EngineState>()
+        .child
+        .lock()
+        .unwrap()
+        .replace(child);
+
+      let app_handle = app.handle().clone();
+      tauri::async_runtime::spawn(async move {
+        while let Some(event) = rx.recv().await {
+          match event {
+            CommandEvent::Stdout(bytes) => {
+              let s = String::from_utf8_lossy(&bytes).to_string();
+              print!("[engine stdout] {}", s);
+
+              let state = app_handle.state::<EngineState>();
+              if let Some(port) = parse_port_from_line(&s) {
+                state.info.lock().unwrap().port = Some(port);
+              }
+              if let Some(tok) = parse_shutdown_token_from_line(&s) {
+                state.info.lock().unwrap().shutdown_token = Some(tok);
+              }
+            }
+            CommandEvent::Stderr(bytes) => {
+              let s = String::from_utf8_lossy(&bytes).to_string();
+              eprint!("[engine stderr] {}", s);
+
+              let state = app_handle.state::<EngineState>();
+              if let Some(port) = parse_port_from_line(&s) {
+                state.info.lock().unwrap().port = Some(port);
+              }
+              if let Some(tok) = parse_shutdown_token_from_line(&s) {
+                state.info.lock().unwrap().shutdown_token = Some(tok);
+              }
+            }
+            other => {
+              println!("[engine] {:?}", other);
+            }
+          }
+        }
+      });
+
+      println!("[engine] started");
       Ok(())
     })
+    .on_window_event(|window, event| {
+      if let WindowEvent::CloseRequested { api, .. } = event {
+        let app_handle = window.app_handle().clone();
+        let label = window.label().to_string();
+
+        {
+          let state = app_handle.state::<EngineState>();
+          let already_allowed = *state.allow_close.lock().unwrap();
+          if already_allowed {
+            return;
+          }
+          api.prevent_close();
+        }
+
+        // Pull state data out synchronously
+        let state = app_handle.state::<EngineState>();
+        let child_opt = state.child.lock().unwrap().take();
+
+        let (port, token) = {
+          let info = state.info.lock().unwrap();
+          (info.port, info.shutdown_token.clone())
+        };
+
+        tauri::async_runtime::spawn(async move {
+          if let Some(child) = child_opt {
+            let mut graceful_ok = false;
+
+            if let (Some(p), Some(t)) = (port, token.as_deref()) {
+              match request_engine_shutdown(p, t).await {
+                Ok(_) => {
+                  println!("[engine] shutdown requested");
+                  graceful_ok = true;
+                }
+                Err(e) => eprintln!("[engine] shutdown request failed: {}", e),
+              }
+            }
+
+            if !graceful_ok {
+              let _ = child.kill();
+              println!("[engine] killed");
+            }
+          }
+
+          // Allow the next CloseRequested to proceed.
+          {
+            let state = app_handle.state::<EngineState>();
+            *state.allow_close.lock().unwrap() = true;
+          }
+
+          // Close the same window that was requested.
+          if let Some(w) = app_handle.get_webview_window(&label) {
+            let _ = w.close();
+          }
+        });
+      }
+    })
+
     .run(tauri::generate_context!())
-    .expect("error while running tauri application");
+    .expect("error while running tauri app");
 }
 
+#[tauri::command]
+async fn export_db(app: tauri::AppHandle) -> Result<String, String> {
+  // Blocking save dialog (works well inside a command)
+  let file_path = app
+    .dialog()
+    .file()
+    .set_title("Export JobHunt database")
+    .set_file_name("jobhunt.db")
+    .blocking_save_file()
+    .ok_or("Export cancelled")?;
+
+  // Convert FilePath -> PathBuf (handles file:// URIs too)
+  let dest = file_path.into_path().map_err(|e| e.to_string())?;
+
+  // Best-effort checkpoint WAL
+  let port = app.state::<EngineState>().info.lock().unwrap().port;
+  if let Some(p) = port {
+    let url = format!("http://127.0.0.1:{}/db/checkpoint", p);
+    let _ = reqwest::Client::new().post(url).send().await;
+  }
+
+  // Copy DB file from app data dir
+  let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+  let src = data_dir.join("jobhunt.db");
+
+  if !src.exists() {
+    return Err("DB file not found yet".into());
+  }
+
+  std::fs::copy(&src, &dest).map_err(|e| e.to_string())?;
+
+  Ok(dest.to_string_lossy().to_string())
+}
 

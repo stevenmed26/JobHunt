@@ -1,0 +1,93 @@
+app:
+  port: 38471
+  data_dir: "./data"
+
+polling:
+  email_seconds: 120
+  fast_lane_seconds: 600
+  normal_lane_seconds: 3600
+
+filters:
+  remote_ok: true
+  locations_allow:
+    - "dallas"
+    - "fort worth"
+    - "dfw"
+    - "plano"
+    - "irving"
+    - "frisco"
+    - "richardson"
+    - "arlington"
+    - "grapevine"
+    - "southlake"
+    - "las colinas"
+  locations_block:
+    - "austin only"
+    - "houston only"
+
+scoring:
+  notify_min_score: 75
+
+  title_rules:
+    - tag: "SRE"
+      weight: 25
+      any: ["site reliability", "sre"]
+    - tag: "Platform"
+      weight: 18
+      any: ["platform engineer", "infrastructure engineer"]
+    - tag: "Backend"
+      weight: 15
+      any: ["backend engineer", "backend developer"]
+
+  keyword_rules:
+    - tag: "Go"
+      weight: 12
+      any: ["golang", " go "]
+    - tag: "Kubernetes"
+      weight: 12
+      any: ["kubernetes", "k8s"]
+    - tag: "Terraform"
+      weight: 10
+      any: ["terraform"]
+    - tag: "AWS"
+      weight: 10
+      any: ["aws", "eks", "ec2", "s3", "iam"]
+    - tag: "Observability"
+      weight: 8
+      any: ["prometheus", "grafana", "opentelemetry", "otel"]
+
+  penalties:
+    - reason: "SeniorOnly"
+      weight: -12
+      any: ["staff", "principal"]
+    - reason: "VeryHighYOE"
+      weight: -10
+      any: ["10+ years", "10 years"]
+
+email:
+  enabled: false
+  imap_host: "imap.gmail.com"
+  imap_port: 993
+  username: "your@gmail.com"
+  # Save App Password through OS keychain
+  mailbox: "INBOX"
+  search_subject_any:
+    - "Job alert"
+    - "new jobs"
+    - "Indeed"
+    - "LinkedIn"
+    - "Engineer"
+    - "Software"
+    - "Developer"
+
+sources:
+  greenhouse:
+    enabled: false
+    companies: []
+  lever:
+    enabled: false
+    companies: []
+
+sources_file: "companies.yml"
+  
+

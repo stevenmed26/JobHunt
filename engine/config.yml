@@ -63,3 +63,30 @@ scoring:
     - reason: "VeryHighYOE"
       weight: -10
       any: ["10+ years", "10 years"]
+
+email:
+  enabled: false
+  imap_host: "imap.gmail.com"
+  imap_port: 993
+  username: "your@gmail.com"
+  # Save App Password through OS keychain
+  mailbox: "INBOX"
+  search_subject_any:
+    - "Job alert"
+    - "new jobs"
+    - "Indeed"
+    - "LinkedIn"
+    - "Engineer"
+    - "Software"
+    - "Developer"
+
+sources:
+  greenhouse:
+    enabled: false
+    companies: []
+  lever:
+    enabled: false
+    companies: []
+
+sources_file: "companies.yml"
+  

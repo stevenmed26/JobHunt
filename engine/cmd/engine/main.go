@@ -1,273 +1,180 @@
 package main
 
 import (
-	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
-	"sync"
 	"time"
 
 	"sync/atomic"
 
 	"jobhunt-engine/internal/config"
+	"jobhunt-engine/internal/events"
+	"jobhunt-engine/internal/httpapi"
+	"jobhunt-engine/internal/poll"
+	"jobhunt-engine/internal/scrape"
+	"jobhunt-engine/internal/store"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/gofrs/flock"
 )
 
-type Job struct {
-	ID        int64     `json:"id"`
-	Company   string    `json:"company"`
-	Title     string    `json:"title"`
-	Location  string    `json:"location"`
-	WorkMode  string    `json:"workMode"`
-	URL       string    `json:"url"`
-	Score     int       `json:"score"`
-	Tags      []string  `json:"tags"`
-	FirstSeen time.Time `json:"firstSeen"`
-}
-
-type eventHub struct {
-	mu      sync.Mutex
-	clients map[chan string]struct{}
-}
-
-func newHub() *eventHub {
-	return &eventHub{clients: make(map[chan string]struct{})}
-}
-
-func (h *eventHub) subscribe() chan string {
-	ch := make(chan string, 10)
-	h.mu.Lock()
-	h.clients[ch] = struct{}{}
-	h.mu.Unlock()
-	return ch
-}
-
-func (h *eventHub) unsubscribe(ch chan string) {
-	h.mu.Lock()
-	delete(h.clients, ch)
-	h.mu.Unlock()
-	close(ch)
-}
-
-func (h *eventHub) publish(evt string) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	for ch := range h.clients {
-		select {
-		case ch <- evt:
-		default:
-			// drop if slow
-		}
+func main() {
+	if err := run(); err != nil {
+		log.Printf("fatal: %v", err)
+		os.Exit(1)
 	}
 }
 
-func main() {
-	// Engine data dir: use env if provided (Tauri can pass one), else local folder.
+func run() error {
 	dataDir := os.Getenv("JOBHUNT_DATA_DIR")
 	if dataDir == "" {
 		dataDir = "."
 	}
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("%s", err)
 	}
 
-	defaultCfgPath := filepath.Join("config", "config.yml")
-	userCfgPath, err := config.EnsureUserConfig(dataDir, defaultCfgPath)
+	lockPath := filepath.Join(dataDir, "engine.lock")
+	lk := flock.New(lockPath)
+
+	// TryLock is non-blocking (preferred for “only one instance”)
+	deadline := time.Now().Add(1 * time.Second)
+	for {
+		locked, err := lk.TryLock()
+		if err != nil {
+			return err
+		}
+		if locked {
+			break
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("engine is already running: %s", lockPath)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	defer func() { _ = lk.Unlock() }()
+
+	userCfgPath, err := config.EnsureUserConfig(dataDir)
 	if err != nil {
-		log.Fatalf("config bootstrap failed: %v", err)
+		return fmt.Errorf("config bootstrap failed: %v", err)
 	}
-
+	userCompaniesPath, err := config.EnsureUserCompaniesConfig(dataDir)
+	if err != nil {
+		return fmt.Errorf("config bootstrap failed: %v", err)
+	}
 	// Load config and keep it reloadable
 	var cfgVal atomic.Value // stores config.Config
+
 	loadCfg := func() (config.Config, error) {
-		return config.Load(userCfgPath)
+		cfg, err := config.Load(userCfgPath)
+		if err != nil {
+			return cfg, nil
+		}
+
+		if err := config.OverlayCompanies(&cfg, userCompaniesPath); err != nil {
+			return cfg, fmt.Errorf("load companies (%s): %w", userCompaniesPath, err)
+		}
+
+		cfg, vr := config.NormalizeAndValidate(cfg)
+		if !vr.OK() {
+			log.Printf("[config] INVALID: %v", vr.Errors)
+		}
+		for _, w := range vr.Warnings {
+			log.Printf("[config] WARN: %s", w)
+		}
+
+		log.Printf("[config] GH=%d Lever=%d companiesPath=%s",
+			len(cfg.Sources.Greenhouse.Companies),
+			len(cfg.Sources.Lever.Companies),
+			userCompaniesPath,
+		)
+		return cfg, nil
 	}
 	cfg, err := loadCfg()
 	if err != nil {
-		log.Fatalf("config load failed (%s): %v", userCfgPath, err)
+		return fmt.Errorf("config load failed (%s): %v", userCfgPath, err)
 	}
+
 	cfgVal.Store(cfg)
+
+	// Load scrape status
+	var scrapeStatus atomic.Value // stores scrape.ScrapeStatus
+	scrapeStatus.Store(scrape.ScrapeStatus{})
 
 	dbPath := filepath.Join(dataDir, "jobhunt.db")
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("%s", err)
 	}
+	if _, err := db.Exec(`PRAGMA journal_mode=WAL;`); err != nil {
+		log.Printf("WARN: set WAL: %v", err)
+	}
+	if _, err := db.Exec(`PRAGMA busy_timeout=5000;`); err != nil {
+		log.Printf("WARN: set busy_timeout: %v", err)
+	}
+	if _, err := db.Exec(`PRAGMA synchronous=NORMAL;`); err != nil {
+		log.Printf("WARN: set synchronous: %v", err)
+	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	db.SetConnMaxLifetime(0)
 	defer db.Close()
 
-	if err := migrate(db); err != nil {
-		log.Fatal(err)
+	if err := store.Migrate(db); err != nil {
+		return fmt.Errorf("%s", err)
+	}
+	if _, err := store.CleanupOldJobs(db); err != nil {
+		log.Printf("[retention] cleanup failed: %v", err)
 	}
 
-	hub := newHub()
+	// SSE hub lives outside main now (importable by handlers)
+	hub := events.NewHub()
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, map[string]any{"ok": true, "time": time.Now().Format(time.RFC3339)})
-	})
-	mux.HandleFunc("/jobs", func(w http.ResponseWriter, r *http.Request) {
-		jobs, err := listJobs(r.Context(), db)
-		if err != nil {
-			http.Error(w, err.Error(), 500)
-			return
-		}
-		writeJSON(w, jobs)
-	})
-	mux.HandleFunc("/seed", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "POST only", 405)
-			return
-		}
-		job, err := seedJob(r.Context(), db)
-		if err != nil {
-			http.Error(w, err.Error(), 500)
-			return
-		}
-		// Emit an SSE event so the UI refreshes instantly.
-		hub.publish(`{"type":"job_created","id":` + fmt.Sprint(job.ID) + `}`)
-		writeJSON(w, job)
-	})
-	mux.HandleFunc("/events", func(w http.ResponseWriter, r *http.Request) {
-		// Server-Sent Events
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("Connection", "keep-alive")
-		w.Header().Set("Access-Control-Allow-Origin", "*") // safe for localhost UI
+	// Background poller stays in main, but uses shared types + hub
+	poll.StartPoller(db, &cfgVal, &scrapeStatus, hub)
 
-		flusher, ok := w.(http.Flusher)
-		if !ok {
-			http.Error(w, "streaming unsupported", 500)
-			return
-		}
+	// Build API mux from internal/httpapi package
+	mux := httpapi.NewMux(httpapi.Deps{
+		DB:           db,
+		Hub:          hub,
+		CfgVal:       &cfgVal,
+		ScrapeStatus: &scrapeStatus,
 
-		ch := hub.subscribe()
-		defer hub.unsubscribe(ch)
+		UserCfgPath: userCfgPath,
+		LoadCfg:     loadCfg,
 
-		// initial ping
-		fmt.Fprintf(w, "event: ping\ndata: %s\n\n", `{"type":"ping"}`)
-		flusher.Flush()
+		DeleteJob: deleteJob,
 
-		for {
-			select {
-			case <-r.Context().Done():
-				return
-			case msg := <-ch:
-				fmt.Fprintf(w, "event: message\ndata: %s\n\n", msg)
-				flusher.Flush()
-			}
-		}
+		RunPollOnce: poll.PollOnce,
 	})
 
 	// Bind to a predictable local port for now (simpler).
 	addr := "127.0.0.1:38471"
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("%s", err)
 	}
 	log.Printf("engine listening on http://%s (db=%s)", addr, dbPath)
 
 	srv := &http.Server{
-		Handler:           cors(mux),
+		Handler:           httpapi.Cors(mux),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
-	log.Fatal(srv.Serve(ln))
-}
 
-func cors(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Tauri fetch requests come from "tauri://localhost" origin.
-		origin := r.Header.Get("Origin")
-		if origin != "" {
-			w.Header().Set("Access-Control-Allow-Origin", origin)
-			w.Header().Set("Vary", "Origin")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-			w.Header().Set("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
-		}
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(204)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-func migrate(db *sql.DB) error {
-	_, err := db.Exec(`
-CREATE TABLE IF NOT EXISTS jobs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  company TEXT NOT NULL,
-  title TEXT NOT NULL,
-  location TEXT NOT NULL,
-  work_mode TEXT NOT NULL,
-  url TEXT NOT NULL,
-  score INTEGER NOT NULL DEFAULT 0,
-  tags TEXT NOT NULL DEFAULT '[]',
-  first_seen TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_jobs_first_seen ON jobs(first_seen DESC);
-`)
-	return err
-}
-
-func listJobs(ctx context.Context, db *sql.DB) ([]Job, error) {
-	rows, err := db.QueryContext(ctx, `
-SELECT id, company, title, location, work_mode, url, score, tags, first_seen
-FROM jobs
-ORDER BY first_seen DESC
-LIMIT 200;`)
+	shutdownToken, err := httpapi.RandomToken(32)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	defer rows.Close()
+	log.Printf("shutdown_token=%s", shutdownToken)
 
-	var out []Job
-	for rows.Next() {
-		var j Job
-		var tagsJSON string
-		var firstSeenStr string
-		if err := rows.Scan(&j.ID, &j.Company, &j.Title, &j.Location, &j.WorkMode, &j.URL, &j.Score, &tagsJSON, &firstSeenStr); err != nil {
-			return nil, err
-		}
-		_ = json.Unmarshal([]byte(tagsJSON), &j.Tags)
-		j.FirstSeen, _ = time.Parse(time.RFC3339, firstSeenStr)
-		out = append(out, j)
-	}
-	return out, rows.Err()
-}
+	// /shutdown must be registered here because it needs srv + token
+	mux.HandleFunc("/shutdown", httpapi.ShutdownHandler(&shutdownToken, srv))
 
-func seedJob(ctx context.Context, db *sql.DB) (Job, error) {
-	j := Job{
-		Company:   "SeedCo",
-		Title:     "SRE / Platform Engineer (DFW or Remote)",
-		Location:  "Dallas-Fort Worth, TX",
-		WorkMode:  "remote",
-		URL:       "https://example.com/apply",
-		Score:     88,
-		Tags:      []string{"SRE", "Kubernetes", "Terraform", "AWS", "Go"},
-		FirstSeen: time.Now().UTC(),
-	}
-	tagsB, _ := json.Marshal(j.Tags)
-	res, err := db.ExecContext(ctx, `
-INSERT INTO jobs(company, title, location, work_mode, url, score, tags, first_seen)
-VALUES(?,?,?,?,?,?,?,?);`,
-		j.Company, j.Title, j.Location, j.WorkMode, j.URL, j.Score, string(tagsB), j.FirstSeen.Format(time.RFC3339))
-	if err != nil {
-		return Job{}, err
-	}
-	j.ID, _ = res.LastInsertId()
-	return j, nil
-}
-
-func writeJSON(w http.ResponseWriter, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	_ = enc.Encode(v)
+	return fmt.Errorf("%s", srv.Serve(ln))
 }
