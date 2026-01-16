@@ -84,7 +84,7 @@ func (e *EmailFetcher) Fetch(ctx context.Context) (types.ScrapeResult, error) {
 	for _, m := range msgs {
 		//log.Printf("[email] found email")
 		receivedAt := m.Date
-		msgID, bodyText, htmlBody, subj := util.ParseRFC822(m.RawMessage, m.Subject)
+		_, bodyText, htmlBody, subj := util.ParseRFC822(m.RawMessage, m.Subject)
 		subj = util.DecodeRFC2047(subj)
 
 		// Require subject match when search_subject_any is set
@@ -104,11 +104,6 @@ func (e *EmailFetcher) Fetch(ctx context.Context) (types.ScrapeResult, error) {
 						lj.Salary,
 						lj.URL,
 					}, "\n")
-
-					sid := lj.SourceID
-					if sid == "" {
-						sid = util.MakeSourceID(msgID, lj.URL, subj, m.From)
-					}
 
 					leads = append(leads, domain.JobLead{
 						CompanyName:     lj.Company,

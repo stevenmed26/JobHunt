@@ -7,25 +7,11 @@ import (
 	"errors"
 	"jobhunt-engine/internal/domain"
 	"jobhunt-engine/internal/rank"
+	"jobhunt-engine/internal/scrape/types"
 	"jobhunt-engine/internal/scrape/util"
 	"strings"
 	"time"
 )
-
-type JobRow struct {
-	Company        string
-	Title          string
-	Location       string
-	WorkMode       string
-	Description    string
-	URL            string
-	Score          int
-	Tags           []string
-	ReceivedAt     time.Time
-	SourceID       string
-	SeenFromSource string
-	CompanyLogoURL string
-}
 
 type ScrapeStatus struct {
 	LastRunAt string `json:"last_run_at"`
@@ -35,7 +21,7 @@ type ScrapeStatus struct {
 	Running   bool   `json:"running"`
 }
 
-func InsertJobIfNew(ctx context.Context, db *sql.DB, j JobRow) (bool, error) {
+func InsertJobIfNew(ctx context.Context, db *sql.DB, j types.JobRow) (bool, error) {
 	if j.Company == "" {
 		j.Company = "Unknown"
 	}
@@ -55,7 +41,10 @@ func InsertJobIfNew(ctx context.Context, db *sql.DB, j JobRow) (bool, error) {
 		j.ReceivedAt = time.Now().UTC()
 	}
 	if j.SourceID == "" {
-		j.SourceID = util.HashString("url:" + j.URL)
+		j.SourceID = util.ComputeSourceID(j)
+	} else {
+		// still canonicalize url-based provided ids if you ever do that later
+		j.SourceID = strings.TrimSpace(j.SourceID)
 	}
 
 	tagsB, _ := json.Marshal(j.Tags)
@@ -94,7 +83,7 @@ WHERE source_id = ?
 	return n > 0, nil
 }
 
-func jobRowFromLead(lead domain.JobLead, s rank.YAMLScorer) JobRow {
+func jobRowFromLead(lead domain.JobLead, s rank.YAMLScorer) types.JobRow {
 	recv := time.Now().UTC()
 	if lead.PostedAt != nil && !lead.PostedAt.IsZero() {
 		recv = lead.PostedAt.UTC()
@@ -108,7 +97,7 @@ func jobRowFromLead(lead domain.JobLead, s rank.YAMLScorer) JobRow {
 		sourceID = util.HashString("url:" + strings.TrimSpace(lead.URL))
 	}
 
-	return JobRow{
+	return types.JobRow{
 		Company:        strings.TrimSpace(lead.CompanyName),
 		Title:          strings.TrimSpace(lead.Title),
 		Location:       strings.TrimSpace(lead.LocationRaw),
