@@ -8,13 +8,14 @@
     "build": "tsc && vite build",
     "engine:kill": "cmd /c \"taskkill /F /IM engine.exe 2>nul & taskkill /F /IM engine-x86_64-pc-windows-msvc.exe 2>nul\"",
     "tauri:dev": "node scripts/dev-tauri.js",
-
+    "engine:build": "go -C ../../../engine build -o ../apps/desktop/jobhunt/src-tauri/bin/engine.exe ./cmd/engine",
     "tauri:build": "npm run engine:build && tauri build"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-opener": "^2",
     "@tauri-apps/plugin-shell": "^2.3.3",
+    "@tauri-apps/plugin-updater": "^2.9.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
   },

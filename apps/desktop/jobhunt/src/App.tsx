@@ -5,6 +5,18 @@ import Preferences from "./Preferences";
 import Scraping from "./Scraping";
 import Select from "./ui/Select";
 import { Command } from "@tauri-apps/plugin-shell";
+import { check } from "@tauri-apps/plugin-updater";
+
+async function checkForUpdates() {
+  const update = await check();
+  if (!update) {
+    console.log("No update available");
+    return;
+  }
+  console.log("Update available:", update.version);
+
+  await update.downloadAndInstall();
+}
 
 async function startEngineDebug() {
   const cmd = Command.sidecar("engine");
@@ -31,12 +43,16 @@ type SortKey = "score" | "date" | "company" | "title";
 type WindowKey = "24h" | "7d" | "all";
 
 export default function App() {
+  const DEV_TOOLS = import.meta.env.DEV;
+
   const [sort, setSort] = useState<SortKey>("score");
   const [windowKey, setWindowKey] = useState<WindowKey>("7d");
 
   const [view, setView] = useState<"jobs" | "prefs" | "scrape">("jobs");
   const [jobs, setJobs] = useState<Job[]>([]);
   const [err, setErr] = useState<string>("");
+
+  checkForUpdates().catch(console.error);
 
   const params = useMemo(() => {
     const p = new URLSearchParams({ sort, window: windowKey });
@@ -78,9 +94,10 @@ export default function App() {
 
       <div className="toolbar">
         <button className="btn btnPrimary" onClick={() => refresh()}>Refresh</button>
-        <button className="btn" onClick={() => seedJob().then(refresh).catch((e) => setErr(String(e)))}>
+        {DEV_TOOLS && (<button className="btn" onClick={() => seedJob().then(refresh).catch((e) => setErr(String(e)))}>
           Seed
         </button>
+        )}
         <button className="btn" onClick={() => setView("prefs")}>Preferences</button>
         <button className="btn" onClick={() => setView("scrape")}>Scraping</button>
       </div>
