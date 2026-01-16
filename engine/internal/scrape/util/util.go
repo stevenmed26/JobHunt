@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"html"
 	"io"
+	"jobhunt-engine/internal/scrape/types"
 	"mime"
 	"mime/multipart"
 	"mime/quotedprintable"
@@ -227,16 +228,27 @@ func ContainsAnyCI(s string, any []string) bool {
 
 // ---------------- Dedupe / URL canonicalization ----------------
 
-func MakeSourceID(messageID, urlStr, subject, from string) string {
-	nurl := canonicalizeURL(urlStr)
-	if nurl == "" {
-		return ""
+func normalizeKeyText(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	s = strings.ReplaceAll(s, "\u00a0", " ")
+	s = strings.Join(strings.Fields(s), " ")
+	return s
+}
+
+func ComputeSourceID(j types.JobRow) string {
+	if strings.TrimSpace(j.SourceID) != "" {
+		return j.SourceID
 	}
-	base := ""
-	if messageID != "" {
-		base = "mid:" + messageID + "|url:" + nurl
-	} else {
-		base = "from:" + from + "|sub:" + subject + "|url:" + nurl
+
+	cu := canonicalizeURL(j.URL)
+	if cu != "" && !urlIsTooGeneric(cu) {
+		return HashString("url:" + cu)
 	}
-	return HashString(base)
+
+	c := normalizeKeyText(j.Company)
+	t := normalizeKeyText(j.Title)
+	l := normalizeKeyText(j.Location)
+	w := normalizeKeyText(j.WorkMode)
+
+	return HashString("fp:" + c + "|" + t + "|" + l + "|" + w)
 }

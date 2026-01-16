@@ -20,7 +20,6 @@ func canonicalizeURL(raw string) string {
 	u.Host = strings.ToLower(u.Host)
 	u.Fragment = ""
 
-	// drop common tracking params
 	q := u.Query()
 	for k := range q {
 		lk := strings.ToLower(k)
@@ -32,7 +31,6 @@ func canonicalizeURL(raw string) string {
 		}
 	}
 
-	// keep only useful linkedin param currentJobId if present
 	if strings.Contains(u.Host, "linkedin.com") {
 		keep := url.Values{}
 		if v := q.Get("currentJobId"); v != "" {
@@ -49,4 +47,14 @@ func canonicalizeURL(raw string) string {
 	}
 	u.RawQuery = q.Encode()
 	return u.String()
+}
+
+func urlIsTooGeneric(u string) bool {
+	lu := strings.ToLower(u)
+
+	if strings.Contains(lu, "linkedin.com/comm/jobs/alerts") {
+		return true
+	}
+
+	return false
 }
