@@ -11,7 +11,10 @@
       "allow": [
         { "name": "bin/engine", "sidecar": true }
       ]
-    }
+    },
+    "updater:default",
+    "updater:allow-check",
+    "updater:allow-download-and-install"
   ]
 }
 

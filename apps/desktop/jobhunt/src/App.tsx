@@ -5,6 +5,18 @@ import Preferences from "./Preferences";
 import Scraping from "./Scraping";
 import Select from "./ui/Select";
 import { Command } from "@tauri-apps/plugin-shell";
+import { check } from "@tauri-apps/plugin-updater";
+
+async function checkForUpdates() {
+  const update = await check();
+  if (!update) {
+    console.log("No update available");
+    return;
+  }
+  console.log("Update available:", update.version);
+
+  await update.downloadAndInstall();
+}
 
 async function startEngineDebug() {
   const cmd = Command.sidecar("engine");
@@ -39,6 +51,8 @@ export default function App() {
   const [view, setView] = useState<"jobs" | "prefs" | "scrape">("jobs");
   const [jobs, setJobs] = useState<Job[]>([]);
   const [err, setErr] = useState<string>("");
+
+  checkForUpdates().catch(console.error);
 
   const params = useMemo(() => {
     const p = new URLSearchParams({ sort, window: windowKey });
