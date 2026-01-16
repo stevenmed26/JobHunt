@@ -46,11 +46,11 @@ func NewMux(d Deps) *http.ServeMux {
 
 	// Scrape
 	sch := ScrapeHandler{
-		DB:             d.DB,
-		CfgVal:         d.CfgVal,
-		ScrapeStatus:   d.ScrapeStatus,
-		Hub:            d.Hub,
-		RunEmailScrape: d.RunEmailScrape,
+		DB:           d.DB,
+		CfgVal:       d.CfgVal,
+		ScrapeStatus: d.ScrapeStatus,
+		Hub:          d.Hub,
+		PollOnce:     d.RunPollOnce,
 	}
 	mux.HandleFunc("/scrape/status", methodMux(map[string]http.HandlerFunc{
 		http.MethodGet: sch.Status,

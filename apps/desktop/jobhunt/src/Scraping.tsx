@@ -17,6 +17,29 @@ function fmt(ts?: string) {
   }
 }
 
+// --- ATS helpers: textarea <-> companies list (minimal, inline-style friendly)
+type SourceCompany = { slug: string; name?: string };
+
+function companiesToText(list: SourceCompany[] | undefined): string {
+  return (list ?? [])
+    .map((c) => (c?.name ? `${c.slug} | ${c.name}` : c.slug))
+    .join("\n");
+}
+
+function textToCompanies(text: string): SourceCompany[] {
+  return (text ?? "")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const parts = line.split("|").map((p) => p.trim()).filter(Boolean);
+      if (parts.length === 0) return null;
+      if (parts.length === 1) return { slug: parts[0] };
+      return { slug: parts[0], name: parts.slice(1).join(" | ") };
+    })
+    .filter((x): x is SourceCompany => !!x && !!x.slug);
+}
+
 export default function Scraping({ onBack }: { onBack: () => void }) {
   const [cfg, setCfg] = useState<EngineConfig | null>(null);
   const [st, setSt] = useState<ScrapeStatus | null>(null);
@@ -27,6 +50,9 @@ export default function Scraping({ onBack }: { onBack: () => void }) {
   const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [runningNow, setRunningNow] = useState(false);
 
+  // local textareas for ATS company lists (keeps typing smooth)
+  const [ghText, setGhText] = useState("");
+  const [leverText, setLeverText] = useState("");
   const lastSavedRef = useRef<string>("");
 
   async function saveIfNeeded(next: string) {
@@ -65,7 +91,13 @@ export default function Scraping({ onBack }: { onBack: () => void }) {
     (async () => {
       try {
         setErr("");
-        setCfg(normalizeConfig(await getConfig()));
+        const c = normalizeConfig(await getConfig());
+        setCfg(c);
+
+        // initialize textarea content from config once loaded
+        const s = (c as any).sources;
+        setGhText(companiesToText(s?.greenhouse?.companies));
+        setLeverText(companiesToText(s?.lever?.companies));
       } catch (e: any) {
         setErr(String(e?.message ?? e));
       }
@@ -86,8 +118,23 @@ export default function Scraping({ onBack }: { onBack: () => void }) {
     try {
       setSaving(true);
       setErr("");
-      const saved = await putConfig(cfg);
-      setCfg(normalizeConfig(saved));
+
+      // Before save: sync textarea -> cfg.sources (minimal mutation)
+      const c = cloneCfg(cfg) as any;
+      c.sources = c.sources ?? {};
+      c.sources.greenhouse = c.sources.greenhouse ?? { enabled: false, companies: [] };
+      c.sources.lever = c.sources.lever ?? { enabled: false, companies: [] };
+      c.sources.greenhouse.companies = textToCompanies(ghText);
+      c.sources.lever.companies = textToCompanies(leverText);
+
+      const saved = await putConfig(c);
+      const norm = normalizeConfig(saved);
+      setCfg(norm);
+
+      // re-sync textareas from saved config (so formatting stays canonical)
+      const s = (norm as any).sources;
+      setGhText(companiesToText(s?.greenhouse?.companies));
+      setLeverText(companiesToText(s?.lever?.companies));
     } catch (e: any) {
       setErr(String(e?.message ?? e));
     } finally {
@@ -110,6 +157,7 @@ export default function Scraping({ onBack }: { onBack: () => void }) {
   }
 
   const email = useMemo(() => cfg?.email, [cfg]);
+  const sources = useMemo(() => (cfg as any)?.sources, [cfg]);
 
   return (
     <div className="app">
@@ -297,6 +345,92 @@ export default function Scraping({ onBack }: { onBack: () => void }) {
               >
                 Add filter
               </button>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* ATS Sources (Greenhouse / Lever) */}
+      <div className="atsPanel">
+        <div className="atsHead">
+          <div className="atsTitle">ATS Sources</div>
+          <div className="atsHint">
+            One per line: <code>slug</code> or <code>slug | Display Name</code>
+          </div>
+        </div>
+
+        {!cfg ? (
+          <div className="listBox">
+            <div className="small">Loading config…</div>
+          </div>
+        ) : (
+          <>
+            {/* Greenhouse */}
+            <div className="atsSection">
+              <div className="atsRowTop">
+                <div className="atsName">Greenhouse</div>
+                <div className="spacer" />
+                <label className="checkInline">
+                  <input
+                    className="checkbox"
+                    type="checkbox"
+                    checked={!!sources?.greenhouse?.enabled}
+                    onChange={(e) => {
+                      const c = cloneCfg(cfg) as any;
+                      c.sources = c.sources ?? {};
+                      c.sources.greenhouse = c.sources.greenhouse ?? { enabled: false, companies: [] };
+                      c.sources.greenhouse.enabled = e.target.checked;
+                      setCfg(c);
+                    }}
+                  />
+                  Enabled
+                </label>
+              </div>
+
+              <div className="help">
+                Example: <code>boards.greenhouse.io/stripe</code> → slug <code>stripe</code>
+              </div>
+
+              <textarea
+                className="atsTextarea"
+                value={ghText}
+                onChange={(e) => setGhText(e.target.value)}
+                placeholder={"stripe | Stripe\ncoinbase | Coinbase"}
+              />
+            </div>
+
+            {/* Lever */}
+            <div className="atsSection">
+              <div className="atsRowTop">
+                <div className="atsName">Lever</div>
+                <div className="spacer" />
+                <label className="checkInline">
+                  <input
+                    className="checkbox"
+                    type="checkbox"
+                    checked={!!sources?.lever?.enabled}
+                    onChange={(e) => {
+                      const c = cloneCfg(cfg) as any;
+                      c.sources = c.sources ?? {};
+                      c.sources.lever = c.sources.lever ?? { enabled: false, companies: [] };
+                      c.sources.lever.enabled = e.target.checked;
+                      setCfg(c);
+                    }}
+                  />
+                  Enabled
+                </label>
+              </div>
+
+              <div className="help">
+                Example: <code>jobs.lever.co/airtable</code> → slug <code>airtable</code>
+              </div>
+
+              <textarea
+                className="atsTextarea"
+                value={leverText}
+                onChange={(e) => setLeverText(e.target.value)}
+                placeholder={"airtable | Airtable\nzapier | Zapier"}
+              />
             </div>
           </>
         )}

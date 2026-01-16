@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"log"
@@ -16,8 +15,8 @@ import (
 	"jobhunt-engine/internal/config"
 	"jobhunt-engine/internal/events"
 	"jobhunt-engine/internal/httpapi"
-	apirouter "jobhunt-engine/internal/httpapi" // new router + handlers
-	email_scrape "jobhunt-engine/internal/scrape/email"
+	"jobhunt-engine/internal/poll"
+	"jobhunt-engine/internal/scrape"
 	"jobhunt-engine/internal/store"
 
 	_ "modernc.org/sqlite"
@@ -65,21 +64,40 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("config bootstrap failed: %v", err)
 	}
-
+	userCompaniesPath, err := config.EnsureUserCompaniesConfig(dataDir)
+	if err != nil {
+		return fmt.Errorf("config bootstrap failed: %v", err)
+	}
 	// Load config and keep it reloadable
 	var cfgVal atomic.Value // stores config.Config
+
 	loadCfg := func() (config.Config, error) {
-		return config.Load(userCfgPath)
+		cfg, err := config.Load(userCfgPath)
+		if err != nil {
+			return cfg, nil
+		}
+
+		if err := config.OverlayCompanies(&cfg, userCompaniesPath); err != nil {
+			return cfg, fmt.Errorf("load companies (%s): %w", userCompaniesPath, err)
+		}
+
+		log.Printf("[config] GH=%d Lever=%d companiesPath=%s",
+			len(cfg.Sources.Greenhouse.Companies),
+			len(cfg.Sources.Lever.Companies),
+			userCompaniesPath,
+		)
+		return cfg, nil
 	}
 	cfg, err := loadCfg()
 	if err != nil {
 		return fmt.Errorf("config load failed (%s): %v", userCfgPath, err)
 	}
+
 	cfgVal.Store(cfg)
 
 	// Load scrape status
-	var scrapeStatus atomic.Value // stores apirouter.ScrapeStatus
-	scrapeStatus.Store(apirouter.ScrapeStatus{})
+	var scrapeStatus atomic.Value // stores scrape.ScrapeStatus
+	scrapeStatus.Store(scrape.ScrapeStatus{})
 
 	dbPath := filepath.Join(dataDir, "jobhunt.db")
 	db, err := sql.Open("sqlite", dbPath)
@@ -111,10 +129,10 @@ func run() error {
 	hub := events.NewHub()
 
 	// Background poller stays in main, but uses shared types + hub
-	startEmailPoller(db, &cfgVal, &scrapeStatus, hub)
+	poll.StartPoller(db, &cfgVal, &scrapeStatus, hub)
 
 	// Build API mux from internal/httpapi package
-	mux := apirouter.NewMux(apirouter.Deps{
+	mux := httpapi.NewMux(httpapi.Deps{
 		DB:           db,
 		Hub:          hub,
 		CfgVal:       &cfgVal,
@@ -125,7 +143,7 @@ func run() error {
 
 		DeleteJob: deleteJob,
 
-		RunEmailScrape: email_scrape.RunEmailScrapeOnce,
+		RunPollOnce: poll.PollOnce,
 	})
 
 	// Bind to a predictable local port for now (simpler).
@@ -151,65 +169,4 @@ func run() error {
 	mux.HandleFunc("/shutdown", httpapi.ShutdownHandler(&shutdownToken, srv))
 
 	return fmt.Errorf("%s", srv.Serve(ln))
-}
-
-func deleteJob(ctx context.Context, db *sql.DB, id int64) error {
-	_, err := db.ExecContext(ctx, `DELETE FROM jobs WHERE id = ?;`, id)
-	return err
-}
-
-func startEmailPoller(db *sql.DB, cfgVal *atomic.Value, scrapeStatus *atomic.Value, hub *events.Hub) {
-	go func() {
-		// run forever; interval is read from cfg on each loop so config updates apply live
-		var lastTick time.Time
-
-		for {
-			cfg := cfgVal.Load().(config.Config)
-			sec := cfg.Polling.EmailSeconds
-			if sec <= 0 {
-				sec = 60
-			}
-
-			// sleep until next tick (dynamic interval)
-			if !lastTick.IsZero() {
-				time.Sleep(time.Duration(sec) * time.Second)
-			}
-			lastTick = time.Now()
-
-			if !cfg.Email.Enabled {
-				continue
-			}
-
-			// Prevent concurrent runs (shares the same status guard)
-			st := scrapeStatus.Load().(apirouter.ScrapeStatus)
-			if st.Running {
-				continue
-			}
-
-			scrapeStatus.Store(apirouter.ScrapeStatus{
-				LastRunAt: time.Now().Format(time.RFC3339),
-				Running:   true,
-				LastError: "",
-				LastAdded: 0,
-				LastOkAt:  st.LastOkAt,
-			})
-
-			added, err := email_scrape.RunEmailScrapeOnce(db, cfg, func() {
-				hub.Publish(`{"type":"job_created"}`)
-			})
-			now := time.Now().Format(time.RFC3339)
-
-			next := scrapeStatus.Load().(apirouter.ScrapeStatus)
-			next.Running = false
-			next.LastRunAt = now
-			next.LastAdded = added
-			if err != nil {
-				next.LastError = err.Error()
-			} else {
-				next.LastError = ""
-				next.LastOkAt = now
-			}
-			scrapeStatus.Store(next)
-		}
-	}()
 }

@@ -1,4 +1,4 @@
-import type { EngineConfig, Rule, Penalty } from "./api";
+import type { EngineConfig, Rule, Penalty, EngineSourcesConfig, SourceCompany } from "./api";
 
 function asStringArray(v: any): string[] {
   if (Array.isArray(v)) return v.filter((x) => typeof x === "string");
@@ -26,6 +26,34 @@ function normalizePenalty(p: any): Penalty {
   };
 }
 
+function normalizeCompanies(v: any): SourceCompany[] {
+  if (!Array.isArray(v)) return [];
+  return v
+    .map((c) => {
+      const slug = typeof c?.slug === "string" ? c.slug.trim() : "";
+      if (!slug) return null;
+      const name = typeof c?.name === "string" ? c.name.trim() : undefined;
+      return name ? { slug, name } : { slug };
+    })
+    .filter((x): x is SourceCompany => !!x);
+}
+
+function normalizeSources(s: any): EngineSourcesConfig {
+  const gh = s?.greenhouse ?? {};
+  const lv = s?.lever ?? {};
+
+  return {
+    greenhouse: {
+      enabled: !!gh.enabled,
+      companies: normalizeCompanies(gh.companies),
+    },
+    lever: {
+      enabled: !!lv.enabled,
+      companies: normalizeCompanies(lv.companies),
+    },
+  };
+}
+
 export function normalizeConfig(raw: any): EngineConfig {
   // Start from a safe default shape
   const cfg: EngineConfig = {
@@ -33,7 +61,16 @@ export function normalizeConfig(raw: any): EngineConfig {
     polling: { email_seconds: 60, fast_lane_seconds: 60, normal_lane_seconds: 300 },
     filters: { remote_ok: true, locations_allow: [], locations_block: [] },
     scoring: { notify_min_score: 0, title_rules: [], keyword_rules: [], penalties: [] },
-    email:  { enabled: false, imap_host: "", imap_port: 993, username: "", app_password: "", mailbox: "", search_subject_any: []}
+    email: {
+      enabled: false,
+      imap_host: "",
+      imap_port: 993,
+      username: "",
+      app_password: "",
+      mailbox: "",
+      search_subject_any: [],
+    },
+    sources: normalizeSources(raw?.sources),
   };
 
   cfg.app.port = asInt(raw?.app?.port, cfg.app.port);
@@ -67,6 +104,7 @@ export function normalizeConfig(raw: any): EngineConfig {
   cfg.email.mailbox = typeof em.mailbox === "string" ? em.mailbox : cfg.email.mailbox;
   cfg.email.search_subject_any = asStringArray(em.search_subject_any);
 
+  cfg.sources = normalizeSources(raw?.sources);
 
   return cfg;
 }

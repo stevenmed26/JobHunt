@@ -13,4 +13,5 @@ type JobLead struct {
 	Description     string
 	PostedAt        *time.Time
 	FirstSeenSource string // email/greenhouse/etc.
+	CompanyLogoURL  string
 }

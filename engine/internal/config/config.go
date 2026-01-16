@@ -3,6 +3,7 @@ package config
 
 import (
 	"os"
+	"path/filepath"
 
 	"gopkg.in/yaml.v3"
 )
@@ -17,6 +18,25 @@ type Penalty struct {
 	Reason string   `yaml:"reason" json:"reason"`
 	Weight int      `yaml:"weight" json:"weight"`
 	Any    []string `yaml:"any" json:"any"`
+}
+
+type Company struct {
+	Slug string `yaml:"slug" json:"slug"`
+	Name string `yaml:"name" json:"name"`
+}
+
+type SourceConfig struct {
+	Enabled   bool      `yaml:"enabled" json:"enabled"`
+	Companies []Company `yaml:"companies" json:"companies"`
+}
+
+type Sources struct {
+	Greenhouse SourceConfig `yaml:"greenhouse" json:"greenhouse"`
+	Lever      SourceConfig `yaml:"lever" json:"lever"`
+}
+
+type CompaniesFile struct {
+	Sources Sources `yaml:"sources" json:"sources"`
 }
 
 type Config struct {
@@ -55,14 +75,56 @@ type Config struct {
 		PasswordKeyringAccount string `yaml:"password_keyring_account" json:"password_keyring_account"`
 		PasswordEnv            string `yaml:"password_env" json:"password_env"`
 	} `yaml:"email" json:"email"`
+
+	Sources     Sources `yaml:"sources" json:"sources"`
+	SourcesFile string  `yaml:"sources_file" json:"sources_file"`
 }
 
 func Load(path string) (Config, error) {
 	var cfg Config
+
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return cfg, err
 	}
-	err = yaml.Unmarshal(b, &cfg)
-	return cfg, err
+	if err := yaml.Unmarshal(b, &cfg); err != nil {
+		return cfg, err
+	}
+
+	// Load companies.yml if configured
+	if cfg.SourcesFile != "" {
+		if err := loadCompaniesFile(path, &cfg); err != nil {
+			return cfg, err
+		}
+	}
+
+	return cfg, nil
+}
+
+func loadCompaniesFile(configPath string, cfg *Config) error {
+	companiesPath := cfg.SourcesFile
+	if !filepath.IsAbs(companiesPath) {
+		companiesPath = filepath.Join(filepath.Dir(configPath), companiesPath)
+	}
+
+	b, err := os.ReadFile(companiesPath)
+	if err != nil {
+		// IMPORTANT: missing companies.yml should NOT break startup
+		return nil
+	}
+
+	var cf CompaniesFile
+	if err := yaml.Unmarshal(b, &cf); err != nil {
+		return err
+	}
+
+	// Replace only company lists, not user settings
+	if len(cf.Sources.Greenhouse.Companies) > 0 {
+		cfg.Sources.Greenhouse.Companies = cf.Sources.Greenhouse.Companies
+	}
+	if len(cf.Sources.Lever.Companies) > 0 {
+		cfg.Sources.Lever.Companies = cf.Sources.Lever.Companies
+	}
+
+	return nil
 }

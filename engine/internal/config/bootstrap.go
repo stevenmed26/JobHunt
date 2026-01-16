@@ -22,3 +22,19 @@ func EnsureUserConfig(dataDir string) (string, error) {
 	}
 	return userCfgPath, nil
 }
+
+func EnsureUserCompaniesConfig(dataDir string) (string, error) {
+	path := filepath.Join(dataDir, "companies.yml")
+
+	if _, err := os.Stat(path); err == nil {
+		return path, nil
+	}
+
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(path, DefaultCompaniesYAML, 0o644); err != nil {
+		return "", err
+	}
+	return path, nil
+}
