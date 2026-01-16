@@ -156,7 +156,7 @@ func (s *Scraper) fetchCompany(ctx context.Context, co Company) ([]domain.JobLea
 		}
 		seen[sourceID] = true
 
-		title := cleanText(a.Text())
+		title := util.CleanText(a.Text())
 		if title == "" || looksLikeJunkTitle(title) {
 			// we’ll still fetch details page to get the true title (some boards wrap titles weird)
 			title = ""
@@ -183,6 +183,11 @@ func (s *Scraper) fetchCompany(ctx context.Context, co Company) ([]domain.JobLea
 func (s *Scraper) hydrateJob(ctx context.Context, j *domain.JobLead) error {
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, j.URL, nil)
 	req.Header.Set("User-Agent", "JobHunt/1.0 (+local)")
+	if s.limiter != nil {
+		if err := s.limiter.WaitURL(ctx, j.URL); err != nil {
+			return err
+		}
+	}
 	res, err := s.hc.Do(req)
 	if err != nil {
 		return err
@@ -199,19 +204,19 @@ func (s *Scraper) hydrateJob(ctx context.Context, j *domain.JobLead) error {
 
 	// title
 	if j.Title == "" {
-		if t := cleanText(doc.Find("h1").First().Text()); t != "" {
+		if t := util.CleanText(doc.Find("h1").First().Text()); t != "" {
 			j.Title = t
 		}
 	}
 
 	// location (Greenhouse often has .location or similar)
-	loc := cleanText(doc.Find(".location").First().Text())
+	loc := util.CleanText(doc.Find(".location").First().Text())
 	if loc == "" {
 		// fallback: search for "Location" labels
-		loc = guessLocation(doc)
+		loc = findLocation(doc)
 	}
 	if loc != "" {
-		j.LocationRaw = loc
+		j.LocationRaw = util.NormalizeLocation(loc)
 	}
 
 	// description HTML
@@ -227,10 +232,11 @@ func (s *Scraper) hydrateJob(ctx context.Context, j *domain.JobLead) error {
 		j.PostedAt = &t
 	}
 
-	// work mode heuristic
-	if strings.Contains(strings.ToLower(j.LocationRaw), "remote") {
-		j.WorkMode = "Remote"
-	} else if j.WorkMode == "" {
+	// work mode heuristic (use location + title + desc)
+	if j.WorkMode == "" || j.WorkMode == "Unknown" {
+		j.WorkMode = util.InferWorkModeFromText(j.LocationRaw, j.Title, j.Description)
+	}
+	if j.WorkMode == "" {
 		j.WorkMode = "Unknown"
 	}
 	return nil
@@ -254,18 +260,75 @@ func extractJobID(u string) string {
 	return id
 }
 
-func cleanText(s string) string {
-	s = strings.ReplaceAll(s, "\u00a0", " ")
-	s = strings.Join(strings.Fields(s), " ")
-	return strings.TrimSpace(s)
-}
-
 func looksLikeJunkTitle(t string) bool {
 	l := strings.ToLower(t)
 	return strings.Contains(l, "view") || strings.Contains(l, "apply")
 }
 
-func guessLocation(doc *goquery.Document) string {
-	// low-effort fallback; refine later
+func findLocation(doc *goquery.Document) string {
+	// 1) Known GH patterns
+	candidates := []string{
+		".location",
+		".opening .location",
+		".opening .location--small",
+		".job__location",
+		".app-title + .location", // some boards
+		"[data-testid='job-location']",
+		"[data-testid='location']",
+	}
+
+	for _, sel := range candidates {
+		if t := util.CleanText(doc.Find(sel).First().Text()); t != "" {
+			return util.NormalizeLocation(t)
+		}
+	}
+
+	// 2) Meta tags sometimes carry location-ish info
+	if v, ok := doc.Find(`meta[property="og:description"]`).Attr("content"); ok {
+		// Not perfect, but sometimes includes "Location: X"
+		if loc := extractLocationFromLabeledText(v); loc != "" {
+			return util.NormalizeLocation(loc)
+		}
+	}
+
+	// 3) Label-based fallback: look for "Location" label anywhere on the page
+	body := util.CleanText(doc.Find("body").Text())
+	if loc := extractLocationFromLabeledText(body); loc != "" {
+		return util.NormalizeLocation(loc)
+	}
+
+	return ""
+}
+
+// extracts after "Location" patterns in plain text
+func extractLocationFromLabeledText(s string) string {
+	low := strings.ToLower(s)
+
+	// common label forms: "Location", "Locations", "Job Location"
+	labels := []string{
+		"location:",
+		"locations:",
+		"job location:",
+	}
+
+	for _, lab := range labels {
+		if i := strings.Index(low, lab); i >= 0 {
+			// take a reasonable slice after the label
+			start := i + len(lab)
+			rest := strings.TrimSpace(s[start:])
+
+			// stop at newline-ish boundaries if present
+			for _, cut := range []string{"\n", "\r", " | ", " · "} {
+				if j := strings.Index(rest, cut); j >= 0 {
+					rest = rest[:j]
+				}
+			}
+
+			rest = util.CleanText(rest)
+			if rest != "" && len(rest) <= 80 {
+				return rest
+			}
+		}
+	}
 	return ""
 }
