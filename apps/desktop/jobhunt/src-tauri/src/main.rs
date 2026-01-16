@@ -130,7 +130,7 @@ fn main() {
         // If we're already closing (programmatic close), don't block it again.
         {
           let state = app_handle.state::<EngineState>();
-          let mut allow = state.allow_close.lock().unwrap();
+          let allow = state.allow_close.lock().unwrap();
           if *allow {
             return; // let Tauri close normally
           }
