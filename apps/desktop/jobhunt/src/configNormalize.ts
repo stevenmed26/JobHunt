@@ -66,7 +66,6 @@ export function normalizeConfig(raw: any): EngineConfig {
       imap_host: "",
       imap_port: 993,
       username: "",
-      app_password: "",
       mailbox: "",
       search_subject_any: [],
     },
@@ -100,7 +99,6 @@ export function normalizeConfig(raw: any): EngineConfig {
   cfg.email.imap_host = typeof em.imap_host === "string" ? em.imap_host : cfg.email.imap_host;
   cfg.email.imap_port = asInt(em.imap_port, cfg.email.imap_port);
   cfg.email.username = typeof em.username === "string" ? em.username : cfg.email.username;
-  cfg.email.app_password = typeof em.app_password === "string" ? em.app_password : cfg.email.app_password;
   cfg.email.mailbox = typeof em.mailbox === "string" ? em.mailbox : cfg.email.mailbox;
   cfg.email.search_subject_any = asStringArray(em.search_subject_any);
 

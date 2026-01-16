@@ -110,7 +110,6 @@ export type EngineEmailConfig = {
   imap_host: string;
   imap_port: number;
   username: string;
-  app_password: string;
   mailbox: string;
   search_subject_any: string[];
 };
