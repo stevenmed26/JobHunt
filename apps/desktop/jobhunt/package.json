@@ -9,6 +9,7 @@
     "engine:kill": "cmd /c \"taskkill /F /IM engine.exe 2>nul & taskkill /F /IM engine-x86_64-pc-windows-msvc.exe 2>nul\"",
     "tauri:dev": "node scripts/dev-tauri.js",
 
+    "engine:build": "go -C ../../../engine build -o ../apps/desktop/jobhunt/src-tauri/bin/engine.exe ./cmd/engine",
     "tauri:build": "npm run engine:build && tauri build"
   },
   "dependencies": {

@@ -23,7 +23,10 @@
   },
   "bundle": {
     "active": true,
-    "externalBin": ["bin/engine"]
+    "externalBin": ["bin/engine"],
+    "icon" : [
+      "icons/icon.ico"
+    ]
   }
 }
 

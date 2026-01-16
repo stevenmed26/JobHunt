@@ -31,6 +31,8 @@ type SortKey = "score" | "date" | "company" | "title";
 type WindowKey = "24h" | "7d" | "all";
 
 export default function App() {
+  const DEV_TOOLS = import.meta.env.DEV;
+
   const [sort, setSort] = useState<SortKey>("score");
   const [windowKey, setWindowKey] = useState<WindowKey>("7d");
 
@@ -78,9 +80,10 @@ export default function App() {
 
       <div className="toolbar">
         <button className="btn btnPrimary" onClick={() => refresh()}>Refresh</button>
-        <button className="btn" onClick={() => seedJob().then(refresh).catch((e) => setErr(String(e)))}>
+        {DEV_TOOLS && (<button className="btn" onClick={() => seedJob().then(refresh).catch((e) => setErr(String(e)))}>
           Seed
         </button>
+        )}
         <button className="btn" onClick={() => setView("prefs")}>Preferences</button>
         <button className="btn" onClick={() => setView("scrape")}>Scraping</button>
       </div>
