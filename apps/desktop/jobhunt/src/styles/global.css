@@ -3,6 +3,7 @@
   --text: rgba(255,255,255,0.92);
   --muted: rgba(255,255,255,0.62);
   --hairline: rgba(255,255,255,0.10);
+  --company: rgba(253, 72, 37, 0.8);
 
   --panel: rgba(255,255,255,0.06);     /* like macOS sidebar material */
   --panel2: rgba(255,255,255,0.09);
@@ -246,6 +247,12 @@ select:focus{
   flex-wrap:wrap;
   gap: 8px;
 }
+.jobMeta .company {
+  font-weight: 600;
+  font-size: 1.1em;
+  color: var(--company);
+}
+
 .dot{ opacity: 0.55; }
 
 /* Small, subtle tags */

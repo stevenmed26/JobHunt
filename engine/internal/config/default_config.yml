@@ -79,9 +79,6 @@ email:
     - "Engineer"
     - "Software"
     - "Developer"
-  password_keyring_account: "imap_app_password"
-
-  password_env: "IMAP_APP_PASSWORD"
 
 sources:
   greenhouse:

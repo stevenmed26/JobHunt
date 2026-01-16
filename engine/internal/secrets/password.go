@@ -2,7 +2,8 @@ package secrets
 
 import (
 	"errors"
-	"os"
+	"fmt"
+	"jobhunt-engine/internal/config"
 	"strings"
 
 	"github.com/zalando/go-keyring"
@@ -13,19 +14,11 @@ const (
 	KeyringService = "jobhunt"
 )
 
-func GetIMAPPassword(keyringAccount string, envName string) (string, error) {
+func GetIMAPPassword(keyringAccount string) (string, error) {
 	// 1) Keyring first (recommended)
 	if strings.TrimSpace(keyringAccount) != "" {
 		pw, err := keyring.Get(KeyringService, keyringAccount)
 		if err == nil && strings.TrimSpace(pw) != "" {
-			return pw, nil
-		}
-	}
-
-	// 2) Optional env fallback
-	if strings.TrimSpace(envName) != "" {
-		pw := os.Getenv(envName)
-		if strings.TrimSpace(pw) != "" {
 			return pw, nil
 		}
 	}
@@ -48,4 +41,12 @@ func DeleteIMAPPassword(keyringAccount string) error {
 		return errors.New("keyring account name is empty")
 	}
 	return keyring.Delete(KeyringService, keyringAccount)
+}
+
+func IMAPKeyringAccount(cfg config.Config) string {
+	return fmt.Sprintf(
+		"jobhunt:imap:%s@%s",
+		cfg.Email.Username,
+		cfg.Email.IMAPHost,
+	)
 }

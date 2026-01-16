@@ -71,9 +71,6 @@ type Config struct {
 		Username         string   `yaml:"username" json:"username"`
 		Mailbox          string   `yaml:"mailbox" json:"mailbox"`
 		SearchSubjectAny []string `yaml:"search_subject_any" json:"search_subject_any"`
-
-		PasswordKeyringAccount string `yaml:"password_keyring_account" json:"password_keyring_account"`
-		PasswordEnv            string `yaml:"password_env" json:"password_env"`
 	} `yaml:"email" json:"email"`
 
 	Sources     Sources `yaml:"sources" json:"sources"`

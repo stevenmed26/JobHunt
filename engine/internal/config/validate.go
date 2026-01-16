@@ -161,13 +161,13 @@ func NormalizeAndValidate(cfg Config) (Config, Validation) {
 	}
 
 	// sources enabled check
-	ghOn := out.Sources.Greenhouse.Enabled && len(out.Sources.Greenhouse.Companies) > 0
-	lvOn := out.Sources.Lever.Enabled && len(out.Sources.Lever.Companies) > 0
-	emailOn := out.Email.Enabled
+	// ghOn := out.Sources.Greenhouse.Enabled && len(out.Sources.Greenhouse.Companies) > 0
+	// lvOn := out.Sources.Lever.Enabled && len(out.Sources.Lever.Companies) > 0
+	// emailOn := out.Email.Enabled
 
-	if !emailOn && !ghOn && !lvOn {
-		res.errf("no sources enabled: enable email or enable greenhouse/lever with at least one company")
-	}
+	// if !emailOn && !ghOn && !lvOn {
+	// 	res.errf("no sources enabled: enable email or enable greenhouse/lever with at least one company")
+	// }
 
 	// greenhouse/lever specifics
 	slugRe := regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
@@ -218,14 +218,6 @@ func NormalizeAndValidate(cfg Config) (Config, Validation) {
 		}
 		if len(out.Email.SearchSubjectAny) == 0 {
 			res.warnf("email.search_subject_any is empty; email scraping may find nothing")
-		}
-
-		// password sourcing sanity: at least one method should be configured
-		if strings.TrimSpace(out.Email.PasswordKeyringAccount) == "" && strings.TrimSpace(out.Email.PasswordEnv) == "" {
-			res.warnf("email.password_keyring_account and email.password_env are both empty; you may have no way to load the IMAP password")
-		}
-		if strings.TrimSpace(out.Email.PasswordKeyringAccount) != "" && strings.TrimSpace(out.Email.PasswordEnv) != "" {
-			res.warnf("both email.password_keyring_account and email.password_env are set; ensure you know which one the engine prefers")
 		}
 	}
 

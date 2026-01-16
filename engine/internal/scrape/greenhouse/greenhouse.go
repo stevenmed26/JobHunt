@@ -11,6 +11,7 @@ import (
 
 	"jobhunt-engine/internal/domain"
 	"jobhunt-engine/internal/scrape/types"
+	"jobhunt-engine/internal/scrape/util"
 
 	"github.com/PuerkitoBio/goquery"
 )
@@ -25,14 +26,16 @@ type Company struct {
 }
 
 type Scraper struct {
-	cfg Config
-	hc  *http.Client
+	cfg     Config
+	hc      *http.Client
+	limiter *util.HostLimiter
 }
 
-func New(cfg Config) *Scraper {
+func New(cfg Config, limiter *util.HostLimiter) *Scraper {
 	return &Scraper{
-		cfg: cfg,
-		hc:  &http.Client{Timeout: 20 * time.Second},
+		cfg:     cfg,
+		hc:      &http.Client{Timeout: 20 * time.Second},
+		limiter: limiter,
 	}
 }
 
@@ -99,6 +102,12 @@ func (s *Scraper) fetchCompany(ctx context.Context, co Company) ([]domain.JobLea
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, boardURL, nil)
 	req.Header.Set("User-Agent", "JobHunt/1.0 (+local)")
 
+	if s.limiter != nil {
+		if err := s.limiter.WaitURL(ctx, boardURL); err != nil {
+			return nil, err
+		}
+	}
+
 	res, err := s.hc.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("greenhouse get board: %w", err)
@@ -157,7 +166,7 @@ func (s *Scraper) fetchCompany(ctx context.Context, co Company) ([]domain.JobLea
 			CompanyName:     co.Name,
 			Title:           title,
 			URL:             abs,
-			FirstSeenSource: "greenhouse",
+			FirstSeenSource: "Greenhouse",
 			ATSJobID:        sourceID,
 		})
 	})
