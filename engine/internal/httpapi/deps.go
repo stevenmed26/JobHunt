@@ -22,7 +22,6 @@ type Deps struct {
 	UserCfgPath string
 	LoadCfg     func() (config.Config, error)
 
-	// DB helpers you already have
 	DeleteJob func(ctx context.Context, db *sql.DB, id int64) error
 
 	// Scrape entrypoint (inject for testability)

@@ -188,7 +188,7 @@ fn main() {
 
 #[tauri::command]
 async fn export_db(app: tauri::AppHandle) -> Result<String, String> {
-  // Blocking save dialog (works well inside a command)
+  // Blocking save dialog
   let file_path = app
     .dialog()
     .file()
@@ -200,7 +200,6 @@ async fn export_db(app: tauri::AppHandle) -> Result<String, String> {
   // Convert FilePath -> PathBuf (handles file:// URIs too)
   let dest = file_path.into_path().map_err(|e| e.to_string())?;
 
-  // Best-effort checkpoint WAL
   let port = app.state::<EngineState>().info.lock().unwrap().port;
   if let Some(p) = port {
     let url = format!("http://127.0.0.1:{}/db/checkpoint", p);

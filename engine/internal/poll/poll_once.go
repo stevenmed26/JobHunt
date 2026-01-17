@@ -61,7 +61,7 @@ func PollOnce(db *sql.DB, cfg config.Config, onNewJob func()) (added int, err er
 			res, err := f.Fetch(fctx)
 			if err != nil {
 				log.Printf("[ats:%s] error: %v", f.Name(), err)
-				return nil // best-effort: don’t cancel siblings
+				return nil
 			}
 			results <- res
 			return nil

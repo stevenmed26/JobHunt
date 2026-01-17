@@ -216,7 +216,6 @@ func (s *Scraper) hydrateJob(ctx context.Context, j *domain.JobLead) error {
 		}
 	}
 
-	// work mode derived from whatever we have now
 	if j.WorkMode == "" || j.WorkMode == "Unknown" {
 		j.WorkMode = util.InferWorkModeFromText(j.LocationRaw, j.Title, j.Description)
 	}

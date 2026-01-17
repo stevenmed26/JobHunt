@@ -20,7 +20,6 @@ type JobInsert struct {
 }
 
 func InsertJobIgnore(db *sql.DB, j JobInsert) (added bool, err error) {
-	// relies on unique index on source_id WHERE source_id != ''
 	_, err = db.Exec(`
 INSERT OR IGNORE INTO jobs (company, title, location, work_mode, url, score, tags, date, logo_key, source_id)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
@@ -30,11 +29,8 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
 		return false, fmt.Errorf("insert job: %w", err)
 	}
 
-	// Determine whether it inserted (SQLite doesn’t return rows affected reliably with IGNORE across drivers)
 	var exists int
 	_ = db.QueryRow(`SELECT 1 FROM jobs WHERE source_id = ? LIMIT 1;`, j.SourceID).Scan(&exists)
-	// That doesn't tell us if it was newly added. For that, do a precheck or use changes().
-	// Better: use `SELECT changes()` after insert:
 	var changes int
 	if e := db.QueryRow(`SELECT changes();`).Scan(&changes); e == nil {
 		return changes > 0, nil

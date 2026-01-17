@@ -69,7 +69,6 @@ func ParseRFC822(raw []byte, fallbackSubject string) (messageID, bodyText, htmlB
 
 	msg, err := mail.ReadMessage(bytes.NewReader(raw))
 	if err != nil {
-		// If parsing fails, treat raw as plaintext best-effort
 		return "", string(raw), "", fallbackSubject
 	}
 
@@ -200,14 +199,6 @@ func htmlToText(s string) string {
 func HashString(s string) string {
 	sum := sha1.Sum([]byte(s))
 	return hex.EncodeToString(sum[:])
-}
-
-func clip(s string, max int) string {
-	s = strings.TrimSpace(s)
-	if max <= 0 || len(s) <= max {
-		return s
-	}
-	return s[:max]
 }
 
 // ---------------- Matching / heuristics ----------------

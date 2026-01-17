@@ -12,7 +12,6 @@ import (
 )
 
 func StartPoller(db *sql.DB, cfgVal *atomic.Value, scrapeStatus *atomic.Value, hub *events.Hub) {
-	// Simple ticker loop; you can expand to fast/normal lanes later.
 	go func() {
 		t := time.NewTicker(30 * time.Second)
 		defer t.Stop()

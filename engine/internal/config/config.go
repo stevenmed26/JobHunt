@@ -106,7 +106,6 @@ func loadCompaniesFile(configPath string, cfg *Config) error {
 
 	b, err := os.ReadFile(companiesPath)
 	if err != nil {
-		// IMPORTANT: missing companies.yml should NOT break startup
 		return nil
 	}
 

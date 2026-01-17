@@ -43,7 +43,6 @@ func InsertJobIfNew(ctx context.Context, db *sql.DB, j types.JobRow) (bool, erro
 	if j.SourceID == "" {
 		j.SourceID = util.ComputeSourceID(j)
 	} else {
-		// still canonicalize url-based provided ids if you ever do that later
 		j.SourceID = strings.TrimSpace(j.SourceID)
 	}
 

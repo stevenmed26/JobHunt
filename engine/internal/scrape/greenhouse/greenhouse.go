@@ -174,7 +174,7 @@ func (s *Scraper) fetchCompany(ctx context.Context, co Company) ([]domain.JobLea
 	// Hydrate details (title/location/desc/date) by fetching each job page
 	for i := range jobs {
 		_ = s.hydrateJob(ctx, &jobs[i])
-		// ignore hydrate errors; keep minimal entry
+
 	}
 
 	return jobs, nil
@@ -243,7 +243,6 @@ func (s *Scraper) hydrateJob(ctx context.Context, j *domain.JobLead) error {
 }
 
 func extractJobID(u string) string {
-	// crude but effective: split on /jobs/ and take next chunk of digits
 	parts := strings.Split(u, "/jobs/")
 	if len(parts) < 2 {
 		return ""
@@ -266,13 +265,12 @@ func looksLikeJunkTitle(t string) bool {
 }
 
 func findLocation(doc *goquery.Document) string {
-	// 1) Known GH patterns
 	candidates := []string{
 		".location",
 		".opening .location",
 		".opening .location--small",
 		".job__location",
-		".app-title + .location", // some boards
+		".app-title + .location",
 		"[data-testid='job-location']",
 		"[data-testid='location']",
 	}
@@ -283,15 +281,12 @@ func findLocation(doc *goquery.Document) string {
 		}
 	}
 
-	// 2) Meta tags sometimes carry location-ish info
 	if v, ok := doc.Find(`meta[property="og:description"]`).Attr("content"); ok {
-		// Not perfect, but sometimes includes "Location: X"
 		if loc := extractLocationFromLabeledText(v); loc != "" {
 			return util.NormalizeLocation(loc)
 		}
 	}
 
-	// 3) Label-based fallback: look for "Location" label anywhere on the page
 	body := util.CleanText(doc.Find("body").Text())
 	if loc := extractLocationFromLabeledText(body); loc != "" {
 		return util.NormalizeLocation(loc)

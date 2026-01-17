@@ -59,3 +59,8 @@ func (h JobsHandler) Seed(w http.ResponseWriter, r *http.Request) {
 	h.Hub.Publish(`{"type":"job_created","id":` + fmt.Sprint(job.ID) + `}`)
 	writeJSON(w, job)
 }
+
+func DeleteJob(ctx context.Context, db *sql.DB, id int64) error {
+	_, err := db.ExecContext(ctx, `DELETE FROM jobs WHERE id = ?;`, id)
+	return err
+}

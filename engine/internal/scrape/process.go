@@ -66,7 +66,6 @@ func ProcessLeads(ctx context.Context, db *sql.DB, cfg config.Config, leads []do
 				logoCache[dom] = key // cache empty to avoid retry storms
 			}
 
-			// 3) Backfill logo_key if we got one
 			if key != "" {
 				_, _ = db.ExecContext(ctx, `
 UPDATE jobs
