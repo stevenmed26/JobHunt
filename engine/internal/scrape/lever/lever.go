@@ -215,6 +215,13 @@ func (s *Scraper) hydrateJob(ctx context.Context, j *domain.JobLead) error {
 			}
 		}
 	}
+	if j.LocationRaw == "" { // Still no location? search for "Location" label
+		// fallback: search for "Location" labels
+		j.LocationRaw = util.FindLocation(doc)
+		if j.LocationRaw != "" {
+			j.LocationRaw = util.NormalizeLocation(j.LocationRaw)
+		}
+	}
 
 	if j.WorkMode == "" || j.WorkMode == "Unknown" {
 		j.WorkMode = util.InferWorkModeFromText(j.LocationRaw, j.Title, j.Description)

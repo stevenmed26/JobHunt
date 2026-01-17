@@ -158,7 +158,6 @@ func (s *Scraper) fetchCompany(ctx context.Context, co Company) ([]domain.JobLea
 
 		title := util.CleanText(a.Text())
 		if title == "" || util.LooksLikeJunkTitle(title) {
-			// we’ll still fetch details page to get the true title (some boards wrap titles weird)
 			title = ""
 		}
 
