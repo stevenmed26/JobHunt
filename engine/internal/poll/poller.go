@@ -8,7 +8,7 @@ import (
 
 	"jobhunt-engine/internal/config"
 	"jobhunt-engine/internal/events"
-	"jobhunt-engine/internal/scrape"
+	"jobhunt-engine/internal/scrape/types"
 )
 
 func StartPoller(db *sql.DB, cfgVal *atomic.Value, scrapeStatus *atomic.Value, hub *events.Hub) {
@@ -30,9 +30,9 @@ func StartPoller(db *sql.DB, cfgVal *atomic.Value, scrapeStatus *atomic.Value, h
 
 			// Mark running
 			stAny := scrapeStatus.Load()
-			st := scrape.ScrapeStatus{}
+			st := types.ScrapeStatus{}
 			if stAny != nil {
-				st = stAny.(scrape.ScrapeStatus)
+				st = stAny.(types.ScrapeStatus)
 			}
 			st.Running = true
 			st.LastRunAt = time.Now().Format(time.RFC3339)
@@ -45,9 +45,9 @@ func StartPoller(db *sql.DB, cfgVal *atomic.Value, scrapeStatus *atomic.Value, h
 
 			// Update status
 			stAny = scrapeStatus.Load()
-			st = scrape.ScrapeStatus{}
+			st = types.ScrapeStatus{}
 			if stAny != nil {
-				st = stAny.(scrape.ScrapeStatus)
+				st = stAny.(types.ScrapeStatus)
 			}
 			st.Running = false
 			st.LastAdded = added

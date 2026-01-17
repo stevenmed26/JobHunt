@@ -8,6 +8,13 @@ func CleanText(s string) string {
 	return strings.TrimSpace(s)
 }
 
+func normalizeKeyText(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	s = strings.ReplaceAll(s, "\u00a0", " ")
+	s = strings.Join(strings.Fields(s), " ")
+	return s
+}
+
 func NormalizeLocation(loc string) string {
 	loc = CleanText(loc)
 	if loc == "" {

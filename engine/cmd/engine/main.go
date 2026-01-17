@@ -16,7 +16,7 @@ import (
 	"jobhunt-engine/internal/events"
 	"jobhunt-engine/internal/httpapi"
 	"jobhunt-engine/internal/poll"
-	"jobhunt-engine/internal/scrape"
+	"jobhunt-engine/internal/scrape/types"
 	"jobhunt-engine/internal/store"
 
 	_ "modernc.org/sqlite"
@@ -105,7 +105,7 @@ func run() error {
 
 	// Load scrape status
 	var scrapeStatus atomic.Value // stores scrape.ScrapeStatus
-	scrapeStatus.Store(scrape.ScrapeStatus{})
+	scrapeStatus.Store(types.ScrapeStatus{})
 
 	dbPath := filepath.Join(dataDir, "jobhunt.db")
 	db, err := sql.Open("sqlite", dbPath)
