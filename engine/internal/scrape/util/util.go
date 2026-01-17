@@ -24,44 +24,6 @@ var (
 	reURL  = regexp.MustCompile(`https?://[^\s<>"']+`)
 )
 
-func ExtractLinksFromBody(body string) (urls []string, contexts map[string]string) {
-	contexts = make(map[string]string)
-
-	lower := strings.ToLower(body)
-	textVersion := body
-
-	// Prefer anchors if HTML-ish
-	if strings.Contains(lower, "<html") || strings.Contains(lower, "<a ") {
-		textVersion = htmlToText(body)
-
-		matches := reHref.FindAllStringSubmatch(body, -1)
-		for _, m := range matches {
-			href := strings.TrimSpace(html.UnescapeString(m[1]))
-			txt := strings.TrimSpace(reTags.ReplaceAllString(m[2], " "))
-			txt = strings.Join(strings.Fields(html.UnescapeString(txt)), " ")
-
-			if href == "" {
-				continue
-			}
-
-			cu := canonicalizeURL(href)
-			urls = append(urls, href)
-
-			// store best (longest) context text for this canonical URL
-			if len(txt) > len(contexts[cu]) {
-				contexts[cu] = txt
-			}
-		}
-	}
-
-	// Naked URLs from text (not raw HTML)
-	for _, u := range reURL.FindAllString(textVersion, -1) {
-		urls = append(urls, strings.TrimRight(u, ".,);:]\"'"))
-	}
-
-	return urls, contexts
-}
-
 func ParseRFC822(raw []byte, fallbackSubject string) (messageID, bodyText, htmlBody, subject string) {
 	if len(raw) == 0 {
 		return "", "", "", fallbackSubject
@@ -69,7 +31,6 @@ func ParseRFC822(raw []byte, fallbackSubject string) (messageID, bodyText, htmlB
 
 	msg, err := mail.ReadMessage(bytes.NewReader(raw))
 	if err != nil {
-		// If parsing fails, treat raw as plaintext best-effort
 		return "", string(raw), "", fallbackSubject
 	}
 
@@ -202,14 +163,6 @@ func HashString(s string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func clip(s string, max int) string {
-	s = strings.TrimSpace(s)
-	if max <= 0 || len(s) <= max {
-		return s
-	}
-	return s[:max]
-}
-
 // ---------------- Matching / heuristics ----------------
 
 func ContainsAnyCI(s string, any []string) bool {
@@ -224,15 +177,6 @@ func ContainsAnyCI(s string, any []string) bool {
 		}
 	}
 	return false
-}
-
-// ---------------- Dedupe / URL canonicalization ----------------
-
-func normalizeKeyText(s string) string {
-	s = strings.ToLower(strings.TrimSpace(s))
-	s = strings.ReplaceAll(s, "\u00a0", " ")
-	s = strings.Join(strings.Fields(s), " ")
-	return s
 }
 
 func ComputeSourceID(j types.JobRow) string {

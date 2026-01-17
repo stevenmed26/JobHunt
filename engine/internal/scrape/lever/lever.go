@@ -215,8 +215,14 @@ func (s *Scraper) hydrateJob(ctx context.Context, j *domain.JobLead) error {
 			}
 		}
 	}
+	if j.LocationRaw == "" { // Still no location? search for "Location" label
+		// fallback: search for "Location" labels
+		j.LocationRaw = util.FindLocation(doc)
+		if j.LocationRaw != "" {
+			j.LocationRaw = util.NormalizeLocation(j.LocationRaw)
+		}
+	}
 
-	// work mode derived from whatever we have now
 	if j.WorkMode == "" || j.WorkMode == "Unknown" {
 		j.WorkMode = util.InferWorkModeFromText(j.LocationRaw, j.Title, j.Description)
 	}
@@ -225,77 +231,4 @@ func (s *Scraper) hydrateJob(ctx context.Context, j *domain.JobLead) error {
 	}
 
 	return nil
-}
-
-func looksLikeJunkTitle(t string) bool {
-	l := strings.ToLower(t)
-	return strings.Contains(l, "view") || strings.Contains(l, "apply")
-}
-
-func findLocation(doc *goquery.Document) string {
-	// 1) Known GH patterns
-	candidates := []string{
-		".location",
-		".opening .location",
-		".opening .location--small",
-		".job__location",
-		".app-title + .location", // some boards
-		"[data-testid='job-location']",
-		"[data-testid='location']",
-	}
-
-	for _, sel := range candidates {
-		if t := util.CleanText(doc.Find(sel).First().Text()); t != "" {
-			return util.NormalizeLocation(t)
-		}
-	}
-
-	// 2) Meta tags sometimes carry location-ish info
-	if v, ok := doc.Find(`meta[property="og:description"]`).Attr("content"); ok {
-		// Not perfect, but sometimes includes "Location: X"
-		if loc := extractLocationFromLabeledText(v); loc != "" {
-			return util.NormalizeLocation(loc)
-		}
-	}
-
-	// 3) Label-based fallback: look for "Location" label anywhere on the page
-	body := util.CleanText(doc.Find("body").Text())
-	if loc := extractLocationFromLabeledText(body); loc != "" {
-		return util.NormalizeLocation(loc)
-	}
-
-	return ""
-}
-
-// extracts after "Location" patterns in plain text
-func extractLocationFromLabeledText(s string) string {
-	low := strings.ToLower(s)
-
-	// common label forms: "Location", "Locations", "Job Location"
-	labels := []string{
-		"location:",
-		"locations:",
-		"job location:",
-	}
-
-	for _, lab := range labels {
-		if i := strings.Index(low, lab); i >= 0 {
-			// take a reasonable slice after the label
-			start := i + len(lab)
-			rest := strings.TrimSpace(s[start:])
-
-			// stop at newline-ish boundaries if present
-			for _, cut := range []string{"\n", "\r", " | ", " · "} {
-				if j := strings.Index(rest, cut); j >= 0 {
-					rest = rest[:j]
-				}
-			}
-
-			rest = util.CleanText(rest)
-			if rest != "" && len(rest) <= 80 {
-				return rest
-			}
-		}
-	}
-	return ""
 }

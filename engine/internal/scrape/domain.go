@@ -39,7 +39,6 @@ var domainBlocklist = []string{
 }
 
 func GetOrFindCompanyDomain(ctx context.Context, db *sql.DB, company string) (string, error) {
-	// 1) cached?
 	d, err := store.GetCompanyDomain(ctx, db, company)
 	if err != nil {
 		return "", err
@@ -48,7 +47,6 @@ func GetOrFindCompanyDomain(ctx context.Context, db *sql.DB, company string) (st
 		return d, nil
 	}
 
-	// 2) search
 	found, err := FindCompanyDomainDDG(ctx, company)
 	if err != nil {
 		return "", err
@@ -61,7 +59,6 @@ func GetOrFindCompanyDomain(ctx context.Context, db *sql.DB, company string) (st
 		return "", nil
 	}
 
-	// 3) store
 	if err := store.UpsertCompanyDomain(ctx, db, company, found); err != nil {
 		return "", err
 	}

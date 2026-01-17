@@ -58,7 +58,6 @@ func DialAndLoginIMAP(ctx context.Context, addr, username, password string, tlsC
 		return nil, fmt.Errorf("imap dial tls: %w", err)
 	}
 
-	// Best-effort close on context cancel.
 	go func() {
 		<-ctx.Done()
 		_ = c.Close()
@@ -100,7 +99,7 @@ func FetchUnseen(ctx context.Context, c *imapclient.Client, max int) ([]EmailMes
 
 	criteria := &imap.SearchCriteria{
 		NotFlag: []imap.Flag{imap.FlagSeen},
-		Since:   cutoff, // <-- IMPORTANT
+		Since:   cutoff,
 	}
 
 	searchData, err := c.UIDSearch(criteria, nil).Wait()

@@ -113,9 +113,6 @@ WHERE source_id != '';
 		return err
 	}
 
-	// Back-compat for dev DBs that might predate these columns.
-	// (Technically unnecessary once you rely on user_version properly,
-	// but it's harmless and useful during development.)
 	if !columnExists(tx, "jobs", "source_id") {
 		if _, err := tx.Exec(`ALTER TABLE jobs ADD COLUMN source_id TEXT NOT NULL DEFAULT '';`); err != nil {
 			return err

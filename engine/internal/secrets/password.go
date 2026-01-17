@@ -10,7 +10,6 @@ import (
 )
 
 const (
-	// “Service” groups your app’s secrets in the OS keychain.
 	KeyringService = "jobhunt"
 )
 

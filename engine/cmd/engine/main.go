@@ -16,7 +16,7 @@ import (
 	"jobhunt-engine/internal/events"
 	"jobhunt-engine/internal/httpapi"
 	"jobhunt-engine/internal/poll"
-	"jobhunt-engine/internal/scrape"
+	"jobhunt-engine/internal/scrape/types"
 	"jobhunt-engine/internal/store"
 
 	_ "modernc.org/sqlite"
@@ -26,7 +26,7 @@ import (
 
 func main() {
 	if err := run(); err != nil {
-		log.Printf("fatal: %v", err)
+		log.Printf("%v", err)
 		os.Exit(1)
 	}
 }
@@ -43,7 +43,7 @@ func run() error {
 	lockPath := filepath.Join(dataDir, "engine.lock")
 	lk := flock.New(lockPath)
 
-	// TryLock is non-blocking (preferred for “only one instance”)
+	// TryLock is non-blocking
 	deadline := time.Now().Add(1 * time.Second)
 	for {
 		locked, err := lk.TryLock()
@@ -105,7 +105,7 @@ func run() error {
 
 	// Load scrape status
 	var scrapeStatus atomic.Value // stores scrape.ScrapeStatus
-	scrapeStatus.Store(scrape.ScrapeStatus{})
+	scrapeStatus.Store(types.ScrapeStatus{})
 
 	dbPath := filepath.Join(dataDir, "jobhunt.db")
 	db, err := sql.Open("sqlite", dbPath)
@@ -149,12 +149,12 @@ func run() error {
 		UserCfgPath: userCfgPath,
 		LoadCfg:     loadCfg,
 
-		DeleteJob: deleteJob,
+		DeleteJob: httpapi.DeleteJob,
 
 		RunPollOnce: poll.PollOnce,
 	})
 
-	// Bind to a predictable local port for now (simpler).
+	// Bind to a predictable local port
 	addr := "127.0.0.1:38471"
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
