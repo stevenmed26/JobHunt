@@ -13,7 +13,7 @@ import (
 
 func StartPoller(db *sql.DB, cfgVal *atomic.Value, scrapeStatus *atomic.Value, hub *events.Hub) {
 	go func() {
-		t := time.NewTicker(30 * time.Second)
+		t := time.NewTicker(3 * time.Hour) // Poll every 3 hours
 		defer t.Stop()
 
 		for range t.C {
