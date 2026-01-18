@@ -1,5 +1,5 @@
 import { useRef, useEffect, useMemo, useState } from "react";
-import { EngineConfig, getConfig, putConfig, getScrapeStatus, runScrape, ScrapeStatus, setImapPassword } from "./api";
+import { EngineConfig, getConfig, putConfig, getScrapeStatus, runScrape, ScrapeStatus, setImapPassword, events } from "./api";
 import { normalizeConfig } from "./configNormalize";
 
 function cloneCfg(cfg: EngineConfig): EngineConfig {
@@ -107,11 +107,54 @@ export default function Scraping({ onBack }: { onBack: () => void }) {
 
   // poll status
   useEffect(() => {
-    refreshStatus();
-    const t = setInterval(refreshStatus, 1200);
-    return () => clearInterval(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  let cancelled = false;
+  let pending = false;
+  let lastAt = 0;
+
+  const scheduleRefresh = () => {
+    if (cancelled) return;
+    // coalesce bursts (job_created may fire many times)
+    if (pending) return;
+    pending = true;
+
+    window.setTimeout(async () => {
+      pending = false;
+      if (cancelled) return;
+      await refreshStatus();
+    }, 250);
+  };
+
+  // initial load
+  void refreshStatus();
+
+  // listen to engine events
+  const unsubscribe = events((evt: any) => {
+    if (cancelled) return;
+
+    // throttle noisy bursts
+    const now = Date.now();
+    if (now - lastAt < 150) return;
+    lastAt = now;
+
+    const t = String(evt?.type ?? "");
+    if (!t) return;
+
+    // refresh on scrape lifecycle or job creation
+    if (t === "job_created" || t.startsWith("scrape.")) {
+      scheduleRefresh();
+      return;
+    }
+
+    // if you later standardize events, you can broaden:
+    // if (t.startsWith("scrape.") || t.startsWith("jobs.")) scheduleRefresh();
+  });
+
+  return () => {
+    cancelled = true;
+    unsubscribe?.();
+  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, []);
 
   async function save() {
     if (!cfg) return;

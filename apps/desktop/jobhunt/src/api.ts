@@ -2,6 +2,14 @@ import { normalizeConfig } from "./configNormalize";
 
 export const ENGINE_BASE = "http://127.0.0.1:38471";
 
+export type EngineEvent = {
+  type: string;
+  v?: number;
+  at?: string;
+  request_id?: string;
+  data?: any;
+};
+
 export async function getJobs(qs?: string) {
   const r = await fetch(qs ? `${ENGINE_BASE}/jobs?${qs}` : "/jobs");
   if (!r.ok) throw new Error(await r.text());

@@ -26,11 +26,15 @@ func (h ScrapeHandler) Status(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h ScrapeHandler) Run(w http.ResponseWriter, r *http.Request) {
+	reqID := RequestIDFrom(r.Context())
+
 	st := h.ScrapeStatus.Load().(types.ScrapeStatus)
 	if st.Running {
 		writeJSON(w, map[string]any{"ok": false, "msg": "already running"})
 		return
 	}
+
+	h.Hub.Publish(events.MakeEvent(reqID, "scrape.run.started", 1, nil))
 
 	h.ScrapeStatus.Store(types.ScrapeStatus{
 		LastRunAt: time.Now().Format(time.RFC3339),
@@ -68,8 +72,13 @@ func (h ScrapeHandler) Run(w http.ResponseWriter, r *http.Request) {
 
 		added, err := h.PollOnce(h.DB, cfg, func() {
 			reqID := RequestIDFrom(r.Context())
-			h.Hub.Publish(events.MakeEvent(reqID, "job_created", 1, nil))
+			h.Hub.Publish(events.MakeEvent(reqID, "jobs.created", 1, nil))
 		})
+
+		h.Hub.Publish(events.MakeEvent(reqID, "scrape.run.finished", 1, map[string]any{
+			"added": added,
+			"err":   (err),
+		}))
 
 		now := time.Now().Format(time.RFC3339)
 		nextAny := h.ScrapeStatus.Load()
