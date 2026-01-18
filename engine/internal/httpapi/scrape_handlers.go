@@ -67,7 +67,8 @@ func (h ScrapeHandler) Run(w http.ResponseWriter, r *http.Request) {
 		}
 
 		added, err := h.PollOnce(h.DB, cfg, func() {
-			h.Hub.Publish(`{"type":"job_created"}`)
+			reqID := RequestIDFrom(r.Context())
+			h.Hub.Publish(events.MakeEvent(reqID, "job_created", 1, nil))
 		})
 
 		now := time.Now().Format(time.RFC3339)

@@ -8,6 +8,7 @@ import (
 
 	"jobhunt-engine/internal/config"
 	"jobhunt-engine/internal/events"
+	"jobhunt-engine/internal/httpapi"
 	"jobhunt-engine/internal/scrape/types"
 )
 
@@ -40,7 +41,9 @@ func StartPoller(db *sql.DB, cfgVal *atomic.Value, scrapeStatus *atomic.Value, h
 
 			added, err := PollOnce(db, cfg, func() {
 				// SSE notify
-				hub.Publish(`{"type":"job_created"}`)
+				reqID := httpapi.RequestIDFrom(r.Context())
+				hub.Publish(events.MakeEvent(reqID, "job_created", 1, nil))
+				// hub.Publish(`{"type":"job_created"}`)
 			})
 
 			// Update status

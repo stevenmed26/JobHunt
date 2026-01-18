@@ -1,13 +1,16 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"sync/atomic"
@@ -26,7 +29,6 @@ import (
 
 func main() {
 	if err := run(); err != nil {
-		log.Printf("%v", err)
 		os.Exit(1)
 	}
 }
@@ -140,6 +142,7 @@ func run() error {
 	poll.StartPoller(db, &cfgVal, &scrapeStatus, hub)
 
 	// Build API mux from internal/httpapi package
+
 	mux := httpapi.NewMux(httpapi.Deps{
 		DB:           db,
 		Hub:          hub,
@@ -160,10 +163,17 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("%s", err)
 	}
-	log.Printf("engine listening on http://%s (db=%s)", addr, dbPath)
+	log.Printf("level=info msg=\"engine listening\" addr=%s db=%s", addr, dbPath)
+
+	handler := httpapi.Chain(
+		httpapi.Cors(mux),
+		httpapi.Recover,
+		httpapi.RequestID,
+		httpapi.AccessLog,
+	)
 
 	srv := &http.Server{
-		Handler:           httpapi.Cors(mux),
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -176,5 +186,24 @@ func run() error {
 	// /shutdown must be registered here because it needs srv + token
 	mux.HandleFunc("/shutdown", httpapi.ShutdownHandler(&shutdownToken, srv))
 
-	return fmt.Errorf("%s", srv.Serve(ln))
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+
+	go func() {
+		<-stop
+		log.Printf("level=info msg=\"signal received; shutting down\"")
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+	}()
+
+	err = srv.Serve(ln)
+	if err == http.ErrServerClosed {
+		log.Printf("level=info msg=\"server closed\"")
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("server error: %w", err)
+	}
+	return nil
 }

@@ -19,14 +19,17 @@ func (h EventsHandler) ServeSSE(w http.ResponseWriter, r *http.Request) {
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		http.Error(w, "streaming unsupported", 500)
+		WriteError(w, r, http.StatusInternalServerError, "stream_unsupported", "Streaming unsupported")
 		return
 	}
 
 	ch := h.Hub.Subscribe()
 	defer h.Hub.Unsubscribe(ch)
 
-	fmt.Fprintf(w, "event: ping\ndata: %s\n\n", `{"type":"ping"}`)
+	// Ping as a proper event envelope
+	reqID := RequestIDFrom(r.Context())
+	ping := events.MakeEvent(reqID, "ping", 1, nil)
+	fmt.Fprintf(w, "event: message\ndata: %s\n\n", ping)
 	flusher.Flush()
 
 	for {

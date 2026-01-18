@@ -3,7 +3,6 @@ package httpapi
 import (
 	"context"
 	"database/sql"
-	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -46,7 +45,9 @@ func (h JobsHandler) DeleteByPath(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.Hub.Publish(`{"type":"job_deleted","id":` + fmt.Sprint(id) + `}`)
+	reqID := RequestIDFrom(r.Context())
+	h.Hub.Publish(events.MakeEvent(reqID, "job_deleted", 1, map[string]any{"id": id}))
+	// h.Hub.Publish(`{"type":"job_deleted","id":` + fmt.Sprint(id) + `}`)
 	writeJSON(w, map[string]any{"ok": true, "id": id})
 }
 
@@ -56,7 +57,9 @@ func (h JobsHandler) Seed(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	h.Hub.Publish(`{"type":"job_created","id":` + fmt.Sprint(job.ID) + `}`)
+	reqID := RequestIDFrom(r.Context())
+	h.Hub.Publish(events.MakeEvent(reqID, "job_created", 1, map[string]any{"id": job.ID}))
+	// h.Hub.Publish(`{"type":"job_created","id":` + fmt.Sprint(job.ID) + `}`)
 	writeJSON(w, job)
 }
 
