@@ -53,6 +53,7 @@ export default function Scraping({ onBack }: { onBack: () => void }) {
   // local textareas for ATS company lists (keeps typing smooth)
   const [ghText, setGhText] = useState("");
   const [leverText, setLeverText] = useState("");
+  const [wdText, setWdText] = useState("");
   const lastSavedRef = useRef<string>("");
 
   async function saveIfNeeded(next: string) {
@@ -124,8 +125,10 @@ export default function Scraping({ onBack }: { onBack: () => void }) {
       c.sources = c.sources ?? {};
       c.sources.greenhouse = c.sources.greenhouse ?? { enabled: false, companies: [] };
       c.sources.lever = c.sources.lever ?? { enabled: false, companies: [] };
+      c.sources.workday = c.sources.workday ?? { enabled: false, companies: [] };
       c.sources.greenhouse.companies = textToCompanies(ghText);
       c.sources.lever.companies = textToCompanies(leverText);
+      c.sources.workday.companies = textToCompanies(wdText);
 
       const saved = await putConfig(c);
       const norm = normalizeConfig(saved);
@@ -135,6 +138,7 @@ export default function Scraping({ onBack }: { onBack: () => void }) {
       const s = (norm as any).sources;
       setGhText(companiesToText(s?.greenhouse?.companies));
       setLeverText(companiesToText(s?.lever?.companies));
+      setWdText(companiesToText(s?.workday?.companies));
     } catch (e: any) {
       setErr(String(e?.message ?? e));
     } finally {
@@ -430,6 +434,48 @@ export default function Scraping({ onBack }: { onBack: () => void }) {
                 value={leverText}
                 onChange={(e) => setLeverText(e.target.value)}
                 placeholder={"airtable | Airtable\nzapier | Zapier"}
+              />
+            </div>
+
+            {/* Workday */}
+            <div className="atsSection">
+              <div className="atsRowTop">
+                <div className="atsName">Workday</div>
+                <div className="spacer" />
+                <label className="checkInline">
+                  <input
+                    className="checkbox"
+                    type="checkbox"
+                    checked={!!sources?.workday?.enabled}
+                    onChange={(e) => {
+                      const c = cloneCfg(cfg) as any;
+                      c.sources = c.sources ?? {};
+                      c.sources.workday = c.sources.workday ?? { enabled: false, companies: [] };
+                      c.sources.workday.enabled = e.target.checked;
+                      setCfg(c);
+                    }}
+                  />
+                  Enabled
+                </label>
+              </div>
+
+              <div className="help">
+                Paste the full Workday careers URL.
+                <br />
+                Example:{" "}
+                <code>
+                  https://example.wd5.myworkdayjobs.com/en-US/Careers
+                </code>
+              </div>
+
+              <textarea
+                className="atsTextarea"
+                value={wdText}
+                onChange={(e) => setWdText(e.target.value)}
+                placeholder={
+`ExampleCo | https://example.wd5.myworkdayjobs.com/en-US/Careers
+AnotherCo | https://anotherco.wd1.myworkdayjobs.com/en-US/jobs`
+                }
               />
             </div>
           </>

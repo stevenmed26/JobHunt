@@ -41,6 +41,7 @@ function normalizeCompanies(v: any): SourceCompany[] {
 function normalizeSources(s: any): EngineSourcesConfig {
   const gh = s?.greenhouse ?? {};
   const lv = s?.lever ?? {};
+  const wd = s?.workday ?? {};
 
   return {
     greenhouse: {
@@ -50,6 +51,10 @@ function normalizeSources(s: any): EngineSourcesConfig {
     lever: {
       enabled: !!lv.enabled,
       companies: normalizeCompanies(lv.companies),
+    },
+    workday: {
+      enabled: !!wd.enabled,
+      companies: normalizeCompanies(wd.companies),
     },
   };
 }
