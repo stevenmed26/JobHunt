@@ -540,6 +540,16 @@ select:focus{
   letter-spacing: -0.01em;
 }
 
+.atsWarning {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border-left: 4px solid #c0392b;
+  background: rgba(192, 57, 43, 0.08);
+  color: #c0392b;
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
 .checkInline{
   display: flex;
   align-items: center;

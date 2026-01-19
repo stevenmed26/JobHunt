@@ -366,3 +366,63 @@ sources:
   workday:
     enabled: false
     companies:
+      - slug: "https://sabre.wd1.myworkdayjobs.com/SabreJobs"
+        name: "Sabre"
+
+      - slug: "https://cyrusone.wd1.myworkdayjobs.com/CyrusOne"
+        name: "CyrusOne"
+
+      - slug: "https://vizient.wd1.myworkdayjobs.com/Vizient_Careers"
+        name: "Vizient"
+
+      - slug: "https://sec.wd3.myworkdayjobs.com/Samsung_Careers"
+        name: "Samsung Electronics (US)"
+
+      - slug: "https://relx.wd3.myworkdayjobs.com/CiriumCareers"
+        name: "Cirium (RELX)"
+
+      - slug: "https://theocc.wd5.myworkdayjobs.com/Careers"
+        name: "Options Clearing Corporation (OCC)"
+
+      - slug: "https://jll.wd1.myworkdayjobs.com/jllcareers"
+        name: "JLL"
+
+      - slug: "https://unisys.wd5.myworkdayjobs.com/External"
+        name: "Unisys"
+
+      - slug: "https://sedgwick.wd1.myworkdayjobs.com/Sedgwick"
+        name: "Sedgwick"
+
+      - slug: "https://pnc.wd5.myworkdayjobs.com/External"
+        name: "PNC"
+
+      - slug: "https://academy.wd1.myworkdayjobs.com/Careers"
+        name: "Academy Sports + Outdoors (Corporate Tech)"
+
+      - slug: "https://collectorsuniverse.wd1.myworkdayjobs.com/Collectors"
+        name: "Collectors (PSA / Collectors Universe)"
+
+      - slug: "https://alcon.wd5.myworkdayjobs.com/careers_alcon"
+        name: "Alcon"
+
+      - slug: "https://atmosenergy.wd5.myworkdayjobs.com/External_Career_Site"
+        name: "Atmos Energy"
+
+      - slug: "https://vst.wd5.myworkdayjobs.com/TXU_Careers"
+        name: "Vistra / TXU Energy"
+
+      - slug: "https://asmglobal.wd1.myworkdayjobs.com/Careers"
+        name: "ASM Global (Corporate IT)"
+
+      - slug: "https://bbinsurance.wd1.myworkdayjobs.com/Careers"
+        name: "Brown & Brown Insurance"
+
+      - slug: "https://ryan.wd1.myworkdayjobs.com/RyanCareers"
+        name: "Ryan (Tax Services – Engineering & Data)"
+
+      - slug: "https://cookchildrens.wd1.myworkdayjobs.com/Cook_Childrens_Careers"
+        name: "Cook Children's (IT / Systems)"
+
+      - slug: "https://deluxe.wd5.myworkdayjobs.com/USA_CAN"
+        name: "Deluxe"
+

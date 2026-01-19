@@ -46,7 +46,7 @@ func NormalizeAndValidate(cfg Config) (Config, Validation) {
 		return ys
 	}
 
-	normalizeCompanies := func(in []Company) []Company {
+	normalizeCompanies := func(in []Company, lowerSlug bool) []Company {
 		type key struct{ slug, name string }
 		seen := map[key]bool{}
 		var outc []Company
@@ -54,8 +54,9 @@ func NormalizeAndValidate(cfg Config) (Config, Validation) {
 			slug := strings.TrimSpace(c.Slug)
 			name := strings.TrimSpace(c.Name)
 
-			// make slugs consistent; Greenhouse/Lever slugs are usually lowercase
-			slug = strings.ToLower(slug)
+			if lowerSlug {
+				slug = strings.ToLower(slug)
+			}
 
 			if slug == "" && name == "" {
 				continue
@@ -122,9 +123,9 @@ func NormalizeAndValidate(cfg Config) (Config, Validation) {
 	out.Filters.LocationsBlock = trimDedupe(out.Filters.LocationsBlock, true)
 	out.Email.SearchSubjectAny = trimDedupe(out.Email.SearchSubjectAny, false) // keep case, email subjects are case-insensitive anyway
 
-	out.Sources.Greenhouse.Companies = normalizeCompanies(out.Sources.Greenhouse.Companies)
-	out.Sources.Lever.Companies = normalizeCompanies(out.Sources.Lever.Companies)
-	out.Sources.Workday.Companies = normalizeCompanies(out.Sources.Workday.Companies)
+	out.Sources.Greenhouse.Companies = normalizeCompanies(out.Sources.Greenhouse.Companies, true)
+	out.Sources.Lever.Companies = normalizeCompanies(out.Sources.Lever.Companies, true)
+	out.Sources.Workday.Companies = normalizeCompanies(out.Sources.Workday.Companies, false)
 
 	// ---------- validation ----------
 	// polling sanity
@@ -208,9 +209,9 @@ func NormalizeAndValidate(cfg Config) (Config, Validation) {
 		for i, c := range out.Sources.Workday.Companies {
 			if c.Slug == "" {
 				res.errf("sources.Workday.companies[%d] missing slug", i)
-			} else if !slugRe.MatchString(c.Slug) {
-				res.warnf("sources.Workday.companies[%d].slug %q looks unusual (expected lowercase slug)", i, c.Slug)
-			}
+			} // else if !slugRe.MatchString(c.Slug) {
+			// 	res.warnf("sources.Workday.companies[%d].slug %q looks unusual (expected lowercase slug)", i, c.Slug)
+			// }
 			if strings.TrimSpace(c.Name) == "" {
 				res.warnf("sources.Workday.companies[%d] slug=%q missing name (UI may look less nice)", i, c.Slug)
 			}

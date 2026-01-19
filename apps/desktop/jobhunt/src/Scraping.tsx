@@ -99,6 +99,7 @@ export default function Scraping({ onBack }: { onBack: () => void }) {
         const s = (c as any).sources;
         setGhText(companiesToText(s?.greenhouse?.companies));
         setLeverText(companiesToText(s?.lever?.companies));
+        setWdText(companiesToText(s?.workday?.companies));
       } catch (e: any) {
         setErr(String(e?.message ?? e));
       }
@@ -457,6 +458,13 @@ export default function Scraping({ onBack }: { onBack: () => void }) {
                   />
                   Enabled
                 </label>
+              </div>
+
+              <div className="atsWarning">
+                <strong>WARNING:</strong> Many Workday tenants are protected by Cloudflare and
+                <strong> cannot be scraped automatically</strong>.
+                <br />
+                Support is <em>best-effort only</em> and may return zero results.
               </div>
 
               <div className="help">
