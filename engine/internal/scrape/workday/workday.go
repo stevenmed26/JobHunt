@@ -106,7 +106,7 @@ func (s *Scraper) Fetch(ctx context.Context) (types.ScrapeResult, error) {
 		go func() {
 			defer wg.Done()
 			for co := range workCh {
-				cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+				cctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 				jobs, err := s.fetchCompany(cctx, co)
 				cancel()
 				if err != nil {
@@ -272,6 +272,12 @@ func (s *Scraper) fetchCompany(ctx context.Context, co Company) ([]domain.JobLea
 
 	// Bootstrap once; some tenants require CALYPSO_CSRF_TOKEN + CXS_SESSION.
 	csrf, bootErr := bootstrapSession(ctx, hc, co.Slug)
+	if errors.Is(bootErr, ErrWorkdayBlocked) {
+		s.mu.Lock()
+		s.blockedHost[b.Host] = true
+		s.mu.Unlock()
+		return nil, ErrWorkdayBlocked
+	}
 
 	limit := 50
 	offset := 0
@@ -326,7 +332,6 @@ func (s *Scraper) fetchCompany(ctx context.Context, co Company) ([]domain.JobLea
 		data, _ := io.ReadAll(res.Body)
 		res.Body.Close()
 
-		// If we didn't bootstrap (or it failed), some tenants will 400.
 		// Try one retry after bootstrapping.
 		if res.StatusCode >= 400 {
 			// If we already bootstrapped, don't loop.
@@ -336,8 +341,11 @@ func (s *Scraper) fetchCompany(ctx context.Context, co Company) ([]domain.JobLea
 
 			// Try bootstrap + retry once
 			csrf2, err2 := bootstrapSession(ctx, hc, co.Slug)
-			if err2 != nil {
-				return out, fmt.Errorf("workday status %d (and bootstrap failed: %v) body=%s", res.StatusCode, err2, truncate(string(data), 240))
+			if errors.Is(err2, ErrWorkdayBlocked) {
+				s.mu.Lock()
+				s.blockedHost[b.Host] = true
+				s.mu.Unlock()
+				return out, ErrWorkdayBlocked
 			}
 			bootErr = nil
 			csrf = csrf2
@@ -430,13 +438,12 @@ func (s *Scraper) fetchCompany(ctx context.Context, co Company) ([]domain.JobLea
 	return out, nil
 }
 
-func bootstrapSession(ctx context.Context, client *http.Client, boardURL string) (csrf string, err error) {
+func bootstrapSession(ctx context.Context, client *http.Client, boardURL string) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, boardURL, nil)
 	if err != nil {
 		return "", err
 	}
 
-	// Browser-ish headers help sometimes
 	req.Header.Set("User-Agent", "Mozilla/5.0")
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 	req.Header.Set("Accept-Language", "en-US")
@@ -446,7 +453,15 @@ func bootstrapSession(ctx context.Context, client *http.Client, boardURL string)
 		return "", err
 	}
 	defer resp.Body.Close()
+
+	// Read a small preview first (for CF detection), then discard the rest.
+	previewBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	preview := string(previewBytes)
 	io.Copy(io.Discard, resp.Body)
+
+	if looksLikeCloudflareBlock(resp, preview) {
+		return "", ErrWorkdayBlocked
+	}
 
 	// Pull CALYPSO_CSRF_TOKEN from cookies in jar
 	u, _ := url.Parse(boardURL)
@@ -456,14 +471,6 @@ func bootstrapSession(ctx context.Context, client *http.Client, boardURL string)
 		}
 	}
 
-	buf, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-	bodyPreview := string(buf)
-
-	if looksLikeCloudflareBlock(resp, bodyPreview) {
-		return "", fmt.Errorf("workday bootstrap blocked by cloudflare (status=%d)", resp.StatusCode)
-	}
-
-	// Some tenants may not set it on the first hit; try hitting /wday/cxs/.../jobs next would fail anyway.
 	return "", fmt.Errorf("workday bootstrap: missing CALYPSO_CSRF_TOKEN cookie (status=%d)", resp.StatusCode)
 }
 
@@ -494,22 +501,24 @@ func parseWorkdayPostedAt(s string) *time.Time {
 }
 
 func looksLikeCloudflareBlock(resp *http.Response, bodyPreview string) bool {
-	// Common indicators
-	if strings.Contains(strings.ToLower(resp.Header.Get("Server")), "cloudflare") {
-		// not always a block, but a strong signal
+	server := strings.ToLower(resp.Header.Get("Server"))
+	cfRay := resp.Header.Get("CF-RAY")
+	if cfRay == "" {
+		cfRay = resp.Header.Get("cf-ray")
 	}
-	// Headers CF sets when challenging / bot mgmt
-	if resp.Header.Get("CF-RAY") != "" || resp.Header.Get("cf-ray") != "" {
-		// again, a signal
-	}
-	// Content patterns (HTML challenge page)
-	low := strings.ToLower(bodyPreview)
-	if strings.Contains(low, "attention required") ||
-		strings.Contains(low, "cloudflare") && strings.Contains(low, "checking your browser") ||
-		strings.Contains(low, "/cdn-cgi/") {
+
+	// If CF is in play at all, and we're not getting normal HTML, treat as blocked.
+	if strings.Contains(server, "cloudflare") && cfRay != "" {
 		return true
 	}
-	// Some blocks just 403/429 with cloudflare server header
+
+	low := strings.ToLower(bodyPreview)
+	if strings.Contains(low, "/cdn-cgi/") ||
+		(strings.Contains(low, "cloudflare") && strings.Contains(low, "checking your browser")) ||
+		(strings.Contains(low, "attention required") && strings.Contains(low, "cloudflare")) {
+		return true
+	}
+
 	if resp.StatusCode == 403 || resp.StatusCode == 429 {
 		return true
 	}
