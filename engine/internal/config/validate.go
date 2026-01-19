@@ -124,6 +124,7 @@ func NormalizeAndValidate(cfg Config) (Config, Validation) {
 
 	out.Sources.Greenhouse.Companies = normalizeCompanies(out.Sources.Greenhouse.Companies)
 	out.Sources.Lever.Companies = normalizeCompanies(out.Sources.Lever.Companies)
+	out.Sources.Workday.Companies = normalizeCompanies(out.Sources.Workday.Companies)
 
 	// ---------- validation ----------
 	// polling sanity
@@ -196,6 +197,22 @@ func NormalizeAndValidate(cfg Config) (Config, Validation) {
 			}
 			if strings.TrimSpace(c.Name) == "" {
 				res.warnf("sources.lever.companies[%d] slug=%q missing name (UI may look less nice)", i, c.Slug)
+			}
+		}
+	}
+
+	if out.Sources.Workday.Enabled {
+		if len(out.Sources.Workday.Companies) == 0 {
+			res.errf("sources.Workday.enabled=true but sources.Workday.companies is empty")
+		}
+		for i, c := range out.Sources.Workday.Companies {
+			if c.Slug == "" {
+				res.errf("sources.Workday.companies[%d] missing slug", i)
+			} else if !slugRe.MatchString(c.Slug) {
+				res.warnf("sources.Workday.companies[%d].slug %q looks unusual (expected lowercase slug)", i, c.Slug)
+			}
+			if strings.TrimSpace(c.Name) == "" {
+				res.warnf("sources.Workday.companies[%d] slug=%q missing name (UI may look less nice)", i, c.Slug)
 			}
 		}
 	}

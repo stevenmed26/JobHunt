@@ -25,5 +25,8 @@ func OverlayCompanies(cfg *Config, companiesPath string) error {
 	if len(cf.Sources.Lever.Companies) > 0 {
 		cfg.Sources.Lever.Companies = cf.Sources.Lever.Companies
 	}
+	if len(cf.Sources.Workday.Companies) > 0 {
+		cfg.Sources.Workday.Companies = cf.Sources.Workday.Companies
+	}
 	return nil
 }
