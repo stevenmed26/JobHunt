@@ -123,6 +123,7 @@ export type EngineSourcesConfig = {
   greenhouse: { enabled: boolean; companies: SourceCompany[] };
   lever: { enabled: boolean; companies: SourceCompany[] };
   workday: { enabled: boolean; companies: SourceCompany[] };
+  smartrecruiters: { enabled: boolean; companies: SourceCompany[] };
 }
 
 export async function setImapPassword(password: string) {

@@ -10,6 +10,7 @@ import (
 	"jobhunt-engine/internal/rank"
 	"jobhunt-engine/internal/scrape/greenhouse"
 	"jobhunt-engine/internal/scrape/lever"
+	"jobhunt-engine/internal/scrape/smartrecruiters"
 	"jobhunt-engine/internal/scrape/types"
 	"jobhunt-engine/internal/scrape/util"
 	"jobhunt-engine/internal/scrape/workday"
@@ -212,6 +213,17 @@ func MapWorkDayCompanies(in []config.Company) []workday.Company {
 	out := make([]workday.Company, 0, len(in))
 	for _, c := range in {
 		out = append(out, workday.Company{
+			Slug: c.Slug,
+			Name: c.Name,
+		})
+	}
+	return out
+}
+
+func MapSmartRecruitersCompanies(in []config.Company) []smartrecruiters.Company {
+	out := make([]smartrecruiters.Company, 0, len(in))
+	for _, c := range in {
+		out = append(out, smartrecruiters.Company{
 			Slug: c.Slug,
 			Name: c.Name,
 		})

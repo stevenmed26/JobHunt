@@ -28,5 +28,8 @@ func OverlayCompanies(cfg *Config, companiesPath string) error {
 	if len(cf.Sources.Workday.Companies) > 0 {
 		cfg.Sources.Workday.Companies = cf.Sources.Workday.Companies
 	}
+	if len(cf.Sources.SmartRecruiters.Companies) > 0 {
+		cfg.Sources.SmartRecruiters.Companies = cf.Sources.SmartRecruiters.Companies
+	}
 	return nil
 }

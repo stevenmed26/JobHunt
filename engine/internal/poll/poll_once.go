@@ -8,6 +8,7 @@ import (
 	email_scrape "jobhunt-engine/internal/scrape/email"
 	"jobhunt-engine/internal/scrape/greenhouse"
 	"jobhunt-engine/internal/scrape/lever"
+	"jobhunt-engine/internal/scrape/smartrecruiters"
 	"jobhunt-engine/internal/scrape/types"
 	"jobhunt-engine/internal/scrape/util"
 	"jobhunt-engine/internal/scrape/workday"
@@ -37,6 +38,10 @@ func PollOnce(db *sql.DB, cfg config.Config, onNewJob func()) (added int, err er
 		wd := workday.New(workday.Config{Companies: scrape.MapWorkDayCompanies(cfg.Sources.Workday.Companies)}, limiter)
 		fetchers = append(fetchers, wd)
 	}
+	if cfg.Sources.SmartRecruiters.Enabled {
+		sr := smartrecruiters.New(smartrecruiters.Config{Companies: scrape.MapSmartRecruitersCompanies(cfg.Sources.SmartRecruiters.Companies)}, limiter)
+		fetchers = append(fetchers, sr)
+	}
 	if cfg.Email.Enabled {
 		fetchers = append(fetchers, &email_scrape.EmailFetcher{Cfg: cfg})
 	}
@@ -54,6 +59,10 @@ func PollOnce(db *sql.DB, cfg config.Config, onNewJob func()) (added int, err er
 			case "greenhouse":
 				timeout = 5 * time.Minute
 			case "lever":
+				timeout = 5 * time.Minute
+			case "workday":
+				timeout = 5 * time.Minute
+			case "smartrecruiters":
 				timeout = 5 * time.Minute
 			case "email":
 				timeout = 2 * time.Minute

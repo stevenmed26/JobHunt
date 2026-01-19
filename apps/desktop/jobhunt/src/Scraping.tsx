@@ -54,6 +54,7 @@ export default function Scraping({ onBack }: { onBack: () => void }) {
   const [ghText, setGhText] = useState("");
   const [leverText, setLeverText] = useState("");
   const [wdText, setWdText] = useState("");
+  const [sRText, setSRText] = useState("");
   const lastSavedRef = useRef<string>("");
 
   async function saveIfNeeded(next: string) {
@@ -100,6 +101,7 @@ export default function Scraping({ onBack }: { onBack: () => void }) {
         setGhText(companiesToText(s?.greenhouse?.companies));
         setLeverText(companiesToText(s?.lever?.companies));
         setWdText(companiesToText(s?.workday?.companies));
+        setSRText(companiesToText(s?.smartrecruiters?.companies));
       } catch (e: any) {
         setErr(String(e?.message ?? e));
       }
@@ -127,9 +129,11 @@ export default function Scraping({ onBack }: { onBack: () => void }) {
       c.sources.greenhouse = c.sources.greenhouse ?? { enabled: false, companies: [] };
       c.sources.lever = c.sources.lever ?? { enabled: false, companies: [] };
       c.sources.workday = c.sources.workday ?? { enabled: false, companies: [] };
+      c.sources.smartrecruiters = c.sources.smartrecruiters ?? { enabled: false, companies: [] };
       c.sources.greenhouse.companies = textToCompanies(ghText);
       c.sources.lever.companies = textToCompanies(leverText);
       c.sources.workday.companies = textToCompanies(wdText);
+      c.sources.smartrecruiters.companies = textToCompanies(sRText);
 
       const saved = await putConfig(c);
       const norm = normalizeConfig(saved);
@@ -140,6 +144,7 @@ export default function Scraping({ onBack }: { onBack: () => void }) {
       setGhText(companiesToText(s?.greenhouse?.companies));
       setLeverText(companiesToText(s?.lever?.companies));
       setWdText(companiesToText(s?.workday?.companies));
+      setSRText(companiesToText(s?.smartrecruiters?.companies));
     } catch (e: any) {
       setErr(String(e?.message ?? e));
     } finally {
@@ -435,6 +440,40 @@ export default function Scraping({ onBack }: { onBack: () => void }) {
                 value={leverText}
                 onChange={(e) => setLeverText(e.target.value)}
                 placeholder={"airtable | Airtable\nzapier | Zapier"}
+              />
+            </div>
+
+            {/* SmartRecruiters */}
+            <div className="atsSection">
+              <div className="atsRowTop">
+                <div className="atsName">SmartRecruiters</div>
+                <div className="spacer" />
+                <label className="checkInline">
+                  <input
+                    className="checkbox"
+                    type="checkbox"
+                    checked={!!sources?.smartrecruiters?.enabled}
+                    onChange={(e) => {
+                      const c = cloneCfg(cfg) as any;
+                      c.sources = c.sources ?? {};
+                      c.sources.smartrecruiters = c.sources.smartrecruiters ?? { enabled: false, companies: [] };
+                      c.sources.smartrecruiters.enabled = e.target.checked;
+                      setCfg(c);
+                    }}
+                  />
+                  Enabled
+                </label>
+              </div>
+
+              <div className="help">
+                Example: <code>https://jobs.smartrecruiters.com/AECOM2</code> → slug <code>AECOM2</code>
+              </div>
+
+              <textarea
+                className="atsTextarea"
+                value={sRText}
+                onChange={(e) => setSRText(e.target.value)}
+                placeholder={"AECOM2 | AECOM\nIFS1 | IFS"}
               />
             </div>
 

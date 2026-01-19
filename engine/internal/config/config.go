@@ -31,9 +31,10 @@ type SourceConfig struct {
 }
 
 type Sources struct {
-	Greenhouse SourceConfig `yaml:"greenhouse" json:"greenhouse"`
-	Lever      SourceConfig `yaml:"lever" json:"lever"`
-	Workday    SourceConfig `yaml:"workday" json:"workday"`
+	Greenhouse      SourceConfig `yaml:"greenhouse" json:"greenhouse"`
+	Lever           SourceConfig `yaml:"lever" json:"lever"`
+	Workday         SourceConfig `yaml:"workday" json:"workday"`
+	SmartRecruiters SourceConfig `yaml:"smartrecruiters" json:"smartrecruiters"`
 }
 
 type CompaniesFile struct {

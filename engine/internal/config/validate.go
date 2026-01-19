@@ -126,6 +126,7 @@ func NormalizeAndValidate(cfg Config) (Config, Validation) {
 	out.Sources.Greenhouse.Companies = normalizeCompanies(out.Sources.Greenhouse.Companies, true)
 	out.Sources.Lever.Companies = normalizeCompanies(out.Sources.Lever.Companies, true)
 	out.Sources.Workday.Companies = normalizeCompanies(out.Sources.Workday.Companies, false)
+	out.Sources.SmartRecruiters.Companies = normalizeCompanies(out.Sources.SmartRecruiters.Companies, false)
 
 	// ---------- validation ----------
 	// polling sanity
@@ -214,6 +215,22 @@ func NormalizeAndValidate(cfg Config) (Config, Validation) {
 			// }
 			if strings.TrimSpace(c.Name) == "" {
 				res.warnf("sources.Workday.companies[%d] slug=%q missing name (UI may look less nice)", i, c.Slug)
+			}
+		}
+	}
+
+	if out.Sources.SmartRecruiters.Enabled {
+		if len(out.Sources.SmartRecruiters.Companies) == 0 {
+			res.errf("sources.SmartRecruiters.enabled=true but sources.SmartRecruiters.companies is empty")
+		}
+		for i, c := range out.Sources.SmartRecruiters.Companies {
+			if c.Slug == "" {
+				res.errf("sources.SmartRecruiters.companies[%d] missing slug", i)
+			} // else if !slugRe.MatchString(c.Slug) {
+			// 	res.warnf("sources.SmartRecruiters.companies[%d].slug %q looks unusual (expected lowercase slug)", i, c.Slug)
+			// }
+			if strings.TrimSpace(c.Name) == "" {
+				res.warnf("sources.SmartRecruiters.companies[%d] slug=%q missing name (UI may look less nice)", i, c.Slug)
 			}
 		}
 	}

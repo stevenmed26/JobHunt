@@ -42,6 +42,7 @@ function normalizeSources(s: any): EngineSourcesConfig {
   const gh = s?.greenhouse ?? {};
   const lv = s?.lever ?? {};
   const wd = s?.workday ?? {};
+  const sr = s?.smartrecruiters ?? {};
 
   return {
     greenhouse: {
@@ -55,6 +56,10 @@ function normalizeSources(s: any): EngineSourcesConfig {
     workday: {
       enabled: !!wd.enabled,
       companies: normalizeCompanies(wd.companies),
+    },
+    smartrecruiters: {
+      enabled: !!sr.enabled,
+      companies: normalizeCompanies(sr.companies),
     },
   };
 }
