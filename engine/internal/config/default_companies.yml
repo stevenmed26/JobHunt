@@ -362,3 +362,7 @@ sources:
         name: "Asana (Lever mirror / if present)"
       - slug: "reddit"
         name: "Reddit (Lever mirror / if present)"
+
+  workday:
+    enabled: false
+    companies:

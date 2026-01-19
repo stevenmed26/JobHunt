@@ -12,6 +12,7 @@ import (
 	"jobhunt-engine/internal/scrape/lever"
 	"jobhunt-engine/internal/scrape/types"
 	"jobhunt-engine/internal/scrape/util"
+	"jobhunt-engine/internal/scrape/workday"
 	"jobhunt-engine/internal/store"
 	"log"
 	"net/url"
@@ -200,6 +201,17 @@ func MapLeverCompanies(in []config.Company) []lever.Company {
 	out := make([]lever.Company, 0, len(in))
 	for _, c := range in {
 		out = append(out, lever.Company{
+			Slug: c.Slug,
+			Name: c.Name,
+		})
+	}
+	return out
+}
+
+func MapWorkDayCompanies(in []config.Company) []workday.Company {
+	out := make([]workday.Company, 0, len(in))
+	for _, c := range in {
+		out = append(out, workday.Company{
 			Slug: c.Slug,
 			Name: c.Name,
 		})

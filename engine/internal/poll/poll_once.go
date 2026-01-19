@@ -10,6 +10,7 @@ import (
 	"jobhunt-engine/internal/scrape/lever"
 	"jobhunt-engine/internal/scrape/types"
 	"jobhunt-engine/internal/scrape/util"
+	"jobhunt-engine/internal/scrape/workday"
 	"log"
 	"time"
 
@@ -31,6 +32,10 @@ func PollOnce(db *sql.DB, cfg config.Config, onNewJob func()) (added int, err er
 	if cfg.Sources.Lever.Enabled {
 		lv := lever.New(lever.Config{Companies: scrape.MapLeverCompanies(cfg.Sources.Lever.Companies)}, limiter)
 		fetchers = append(fetchers, lv)
+	}
+	if cfg.Sources.Workday.Enabled {
+		wd := workday.New(workday.Config{Companies: scrape.MapWorkDayCompanies(cfg.Sources.Workday.Companies)}, limiter)
+		fetchers = append(fetchers, wd)
 	}
 	if cfg.Email.Enabled {
 		fetchers = append(fetchers, &email_scrape.EmailFetcher{Cfg: cfg})
