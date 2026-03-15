@@ -143,38 +143,38 @@ export async function setImapPassword(password: string) {
   if (!res.ok) throw new Error(await res.text());
 }
 
-// ─── Claude proxy (goes through engine to avoid Tauri CSP + keep key secure) ─
+// ─── LLM proxy (Groq — goes through engine to avoid Tauri CSP + keep key secure) ─
 
-export interface ClaudeMessage {
+export interface LLMMessage {
   role: "user" | "assistant";
   content: string;
 }
 
-export interface ClaudeRequest {
-  model?: string;
-  max_tokens?: number;
+export interface LLMRequest {
   system?: string;
-  messages: ClaudeMessage[];
+  max_tokens?: number;
+  messages: LLMMessage[];
 }
 
-export async function callClaude(req: ClaudeRequest): Promise<string> {
-  const res = await fetch(`${ENGINE_BASE}/api/claude`, {
+// Calls the engine's /api/llm proxy which forwards to Groq.
+// Returns the raw text content from the model.
+export async function callLLM(req: LLMRequest): Promise<string> {
+  const res = await fetch(`${ENGINE_BASE}/api/llm`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(req),
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(text || `Claude proxy error: ${res.status}`);
+    throw new Error(text || `LLM proxy error: ${res.status}`);
   }
   const data = await res.json();
-  return (data.content ?? [])
-    .map((b: any) => b.text ?? "")
-    .join("");
+  // Engine normalizes Groq response to { text: "..." }
+  return data.text ?? "";
 }
 
-export async function setClaudeAPIKey(apiKey: string): Promise<void> {
-  const res = await fetch(`${ENGINE_BASE}/api/secrets/claude`, {
+export async function setGroqAPIKey(apiKey: string): Promise<void> {
+  const res = await fetch(`${ENGINE_BASE}/api/secrets/groq`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ api_key: apiKey }),
@@ -182,8 +182,8 @@ export async function setClaudeAPIKey(apiKey: string): Promise<void> {
   if (!res.ok) throw new Error(await res.text());
 }
 
-export async function getClaudeKeyStatus(): Promise<boolean> {
-  const res = await fetch(`${ENGINE_BASE}/api/secrets/claude/status`);
+export async function getGroqKeyStatus(): Promise<boolean> {
+  const res = await fetch(`${ENGINE_BASE}/api/secrets/groq/status`);
   if (!res.ok) return false;
   const data = await res.json();
   return data.has_key === true;

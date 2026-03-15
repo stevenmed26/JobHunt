@@ -61,17 +61,17 @@ func NewMux(d Deps) *http.ServeMux {
 	mux.HandleFunc("/api/secrets/imap", methodMux(map[string]http.HandlerFunc{
 		http.MethodPost: sh.SetIMAPPassword,
 	}))
-	mux.HandleFunc("/api/secrets/claude", methodMux(map[string]http.HandlerFunc{
-		http.MethodPost: sh.SetClaudeAPIKey,
+	mux.HandleFunc("/api/secrets/groq", methodMux(map[string]http.HandlerFunc{
+		http.MethodPost: sh.SetGroqAPIKey,
 	}))
-	mux.HandleFunc("/api/secrets/claude/status", methodMux(map[string]http.HandlerFunc{
-		http.MethodGet: sh.GetClaudeKeyStatus,
+	mux.HandleFunc("/api/secrets/groq/status", methodMux(map[string]http.HandlerFunc{
+		http.MethodGet: sh.GetGroqKeyStatus,
 	}))
 
-	// Claude proxy — keeps the API key server-side, avoids Tauri CSP block
-	clh := ClaudeHandler{}
-	mux.HandleFunc("/api/claude", methodMux(map[string]http.HandlerFunc{
-		http.MethodPost: clh.ServeProxy,
+	// LLM proxy — keeps the API key server-side, avoids Tauri CSP block
+	llmh := LLMHandler{}
+	mux.HandleFunc("/api/llm", methodMux(map[string]http.HandlerFunc{
+		http.MethodPost: llmh.ServeProxy,
 	}))
 
 	// Scrape

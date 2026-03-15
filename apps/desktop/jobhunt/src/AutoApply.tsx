@@ -9,7 +9,7 @@
 //   4. Add branch:  if (view === "apply") return <AutoApply onBack={() => setView("jobs")} />;
 
 import React, { useEffect, useRef, useState } from "react";
-import { getJobDescription, callClaude, setClaudeAPIKey, getClaudeKeyStatus } from "./api";
+import { getJobDescription, callLLM, setGroqAPIKey, getGroqKeyStatus } from "./api";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -239,9 +239,9 @@ Desired salary: ${profile.desiredSalary}
 Work authorization: ${profile.workAuth}
   `.trim();
 
-  // Route through engine proxy — direct fetch to api.anthropic.com is blocked
+  // Route through engine proxy — direct fetch to api.groq.com is blocked
   // by Tauri's webview security policy. The engine holds the API key in keyring.
-  const text = await callClaude({
+  const text = await callLLM({
     system: systemPrompt,
     messages: [{ role: "user", content: userMessage }],
     max_tokens: 1000,
@@ -602,7 +602,7 @@ export default function AutoApply({ onBack }: { onBack: () => void }) {
 
   // Check on mount whether a key is already stored
   useEffect(() => {
-    getClaudeKeyStatus().then(setApiKeySet).catch(() => setApiKeySet(false));
+    getGroqKeyStatus().then(setApiKeySet).catch(() => setApiKeySet(false));
   }, []);
 
   // Persist profile on change
@@ -804,7 +804,7 @@ export default function AutoApply({ onBack }: { onBack: () => void }) {
             setApiKeySaving(true);
             setApiKeyError("");
             try {
-              await setClaudeAPIKey(apiKeyInput);
+              await setGroqAPIKey(apiKeyInput);
               setApiKeySet(true);
               setApiKeyInput("");
             } catch (e: any) {
@@ -1127,12 +1127,12 @@ function ProfileTab({
         </div>
       </div>
 
-      {/* ── Claude API Key ── */}
-      <div className="sectionHead">Claude API Key</div>
+      {/* ── Groq API Key ── */}
+      <div className="sectionHead">Groq API Key</div>
       <div style={{ padding: "14px 14px", display: "flex", flexDirection: "column", gap: 10 }}>
         <p className="help" style={{ marginTop: 0 }}>
           Required for the "Fill with Claude" feature. Stored securely in the OS keyring — never sent to the frontend.
-          Get a key at <a href="https://console.anthropic.com" target="_blank" rel="noreferrer" style={{ color: "rgba(10,132,255,0.9)" }}>console.anthropic.com</a>.
+          Get a free key at <a href="https://console.groq.com" target="_blank" rel="noreferrer" style={{ color: "rgba(10,132,255,0.9)" }}>console.groq.com</a>.
         </p>
 
         {apiKeySet && (
@@ -1154,7 +1154,7 @@ function ProfileTab({
             style={{ flex: 1, fontFamily: "monospace", fontSize: 12, letterSpacing: "0.04em" }}
             type="password"
             value={apiKeyInput}
-            placeholder={apiKeySet ? "sk-ant-••••••••••••••••" : "sk-ant-api03-..."}
+            placeholder={apiKeySet ? "gsk_••••••••••••••••" : "gsk_..."}
             onChange={(e) => onApiKeyChange(e.target.value)}
           />
           <button

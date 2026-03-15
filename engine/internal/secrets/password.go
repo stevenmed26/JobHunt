@@ -10,8 +10,8 @@ import (
 )
 
 const (
-	KeyringService   = "jobhunt"
-	claudeKeyAccount = "jobhunt:claude:api_key"
+	KeyringService = "jobhunt"
+	groqKeyAccount = "jobhunt:groq:api_key"
 )
 
 // ─── IMAP ────────────────────────────────────────────────────────────────────
@@ -51,33 +51,33 @@ func IMAPKeyringAccount(cfg config.Config) string {
 	)
 }
 
-// ─── Claude API key ───────────────────────────────────────────────────────────
+// ─── Groq API key ─────────────────────────────────────────────────────────────
 
-func GetClaudeAPIKey() (string, error) {
-	key, err := keyring.Get(KeyringService, claudeKeyAccount)
+func GetGroqAPIKey() (string, error) {
+	key, err := keyring.Get(KeyringService, groqKeyAccount)
 	if err != nil {
-		return "", fmt.Errorf("Claude API key not found in keyring: %w", err)
+		return "", fmt.Errorf("Groq API key not found in keyring: %w", err)
 	}
 	return strings.TrimSpace(key), nil
 }
 
-func SetClaudeAPIKey(apiKey string) error {
+func SetGroqAPIKey(apiKey string) error {
 	apiKey = strings.TrimSpace(apiKey)
 	if apiKey == "" {
 		return errors.New("API key is empty")
 	}
-	if !strings.HasPrefix(apiKey, "sk-ant-") {
-		return errors.New("API key should start with 'sk-ant-'")
+	if !strings.HasPrefix(apiKey, "gsk_") {
+		return errors.New("Groq API keys start with 'gsk_'")
 	}
-	return keyring.Set(KeyringService, claudeKeyAccount, apiKey)
+	return keyring.Set(KeyringService, groqKeyAccount, apiKey)
 }
 
-func DeleteClaudeAPIKey() error {
-	return keyring.Delete(KeyringService, claudeKeyAccount)
+func DeleteGroqAPIKey() error {
+	return keyring.Delete(KeyringService, groqKeyAccount)
 }
 
-// HasClaudeAPIKey returns true if a key is stored, without exposing it.
-func HasClaudeAPIKey() bool {
-	key, err := keyring.Get(KeyringService, claudeKeyAccount)
+// HasGroqAPIKey returns true if a key is stored, without exposing the value.
+func HasGroqAPIKey() bool {
+	key, err := keyring.Get(KeyringService, groqKeyAccount)
 	return err == nil && strings.TrimSpace(key) != ""
 }
