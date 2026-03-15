@@ -4,6 +4,8 @@ import { events, getJobs, seedJob, deleteJob } from "./api";
 import Preferences from "./Preferences";
 import Scraping from "./Scraping";
 import Select from "./ui/Select";
+import AutoApply from "./AutoApply";
+import addToQueue from "./AutoApply"
 import { Command } from "@tauri-apps/plugin-shell";
 import { check } from "@tauri-apps/plugin-updater";
 import { invoke } from "@tauri-apps/api/core";
@@ -104,6 +106,7 @@ export default function App() {
 
   if (view === "prefs") return <Preferences onBack={() => setView("jobs")} />;
   if (view === "scrape") return <Scraping onBack={() => setView("jobs")} />;
+  if (view === "apply") return <AutoApply onBack={() => setView("jobs")} />;
 
   return (
   <div className="app">
@@ -121,6 +124,7 @@ export default function App() {
         <ExportDbButton />
         <button className="btn" onClick={() => setView("prefs")}>Preferences</button>
         <button className="btn" onClick={() => setView("scrape")}>Scraping</button>
+        <button className="btn" onClick={() => setView("apply")}>Auto Apply</button>
       </div>
     </div>
 
@@ -210,7 +214,25 @@ export default function App() {
             </div>
 
             <div className="actions">
-              <a className="link" href={j.url} target="_blank" rel="noreferrer">Apply</a>
+              <button
+                className="btn btnPrimary"
+                style={{ fontSize: 12, padding: "5px 12px" }}
+                onClick={() => {
+                  addToQueue({ id: j.id, company: j.company, title: j.title, url: j.url });
+                  setView("apply");
+                }}
+              >
+                Apply
+              </button>
+              <a
+                className="link"
+                href={j.url}
+                target="_blank"
+                rel="noreferrer"
+                style={{ fontSize: 12 }}
+              >
+                ↗
+              </a>
               <button
                 className="iconBtn"
                 onClick={() => {
