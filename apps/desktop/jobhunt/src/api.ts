@@ -237,3 +237,45 @@ export async function fillForm(req: FillRequest): Promise<{ ok: boolean; pid?: n
   }
   return res.json();
 }
+
+// ─── Company search ───────────────────────────────────────────────────────────
+
+export interface CompanyResult {
+  name: string;
+  slug: string;
+  ats: "greenhouse" | "lever";
+  jobUrl: string;
+}
+
+export async function searchCompanies(q: string, ats?: "greenhouse" | "lever"): Promise<CompanyResult[]> {
+  const params = new URLSearchParams({ q });
+  if (ats) params.set("ats", ats);
+  const res = await fetch(`${ENGINE_BASE}/api/companies/search?${params}`);
+  if (!res.ok) throw new Error(await res.text());
+  const data = await res.json();
+  return data.results as CompanyResult[];
+}
+
+// ─── Company discovery ────────────────────────────────────────────────────────
+
+export async function discoverCompanies(
+  source: "lever" | "greenhouse",
+  keyword?: string
+): Promise<{ results: CompanyResult[]; total: number }> {
+  const params = new URLSearchParams({ source });
+  if (keyword) params.set("q", keyword);
+  const res = await fetch(`${ENGINE_BASE}/api/companies/discover?${params}`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function extractCompaniesFromText(text: string): Promise<CompanyResult[]> {
+  const res = await fetch(`${ENGINE_BASE}/api/companies/extract`, {
+    method: "POST",
+    headers: { "Content-Type": "text/plain" },
+    body: text,
+  });
+  if (!res.ok) throw new Error(await res.text());
+  const data = await res.json();
+  return data.results as CompanyResult[];
+}

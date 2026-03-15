@@ -68,6 +68,21 @@ func NewMux(d Deps) *http.ServeMux {
 		http.MethodGet: sh.GetGroqKeyStatus,
 	}))
 
+	// Company search — probes Greenhouse/Lever APIs to find board slugs
+	csh := CompanySearchHandler{}
+	mux.HandleFunc("/api/companies/search", methodMux(map[string]http.HandlerFunc{
+		http.MethodGet: csh.Search,
+	}))
+
+	// Company discovery — Lever sitemap, Greenhouse seed probing, URL extraction
+	cdh := CompanyDiscoveryHandler{}
+	mux.HandleFunc("/api/companies/discover", methodMux(map[string]http.HandlerFunc{
+		http.MethodGet: cdh.Discover,
+	}))
+	mux.HandleFunc("/api/companies/extract", methodMux(map[string]http.HandlerFunc{
+		http.MethodPost: cdh.Extract,
+	}))
+
 	// LLM proxy — keeps the API key server-side, avoids Tauri CSP block
 	llmh := LLMHandler{}
 	mux.HandleFunc("/api/llm", methodMux(map[string]http.HandlerFunc{
