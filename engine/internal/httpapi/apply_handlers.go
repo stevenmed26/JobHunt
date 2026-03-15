@@ -21,14 +21,13 @@ type ApplyHandler struct {
 
 // ─── Shared types ──────────────────────────────────────────────────────────────
 
-// scrapedField is what filler.js --scrape writes per field
 type scrapedField struct {
 	Selector      string         `json:"selector"`
 	Label         string         `json:"label"`
-	Type          string         `json:"type"` // text|email|tel|select|textarea|file|react-select
+	Type          string         `json:"type"`
 	Required      bool           `json:"required"`
-	Options       []selectOption `json:"options"` // non-empty for select/react-select
-	Value         string         `json:"value"`   // filled in by engine before returning to frontend
+	Options       []selectOption `json:"options"`
+	Value         string         `json:"value"`
 	IsReactSelect bool           `json:"isReactSelect,omitempty"`
 }
 
@@ -37,7 +36,6 @@ type selectOption struct {
 	Label string `json:"label"`
 }
 
-// fillField is what the frontend sends back per field for the fill run
 type fillField struct {
 	Selector      string `json:"selector"`
 	Label         string `json:"label"`
@@ -48,9 +46,6 @@ type fillField struct {
 }
 
 // ─── POST /api/apply/scrape ────────────────────────────────────────────────────
-//
-// Spawns filler.js --scrape, waits for it to finish, reads the result file,
-// and returns the scraped fields to the frontend for Groq to fill.
 
 type scrapeRequest struct {
 	JobID   int64  `json:"jobId"`
@@ -94,7 +89,6 @@ func (h ApplyHandler) Scrape(w http.ResponseWriter, r *http.Request) {
 	cmd.Stderr = os.Stderr
 	cmd.Dir = filepath.Dir(fillerScript)
 
-	// Scrape runs synchronously — we wait for it (30 second timeout)
 	done := make(chan error, 1)
 	if err := cmd.Start(); err != nil {
 		http.Error(w, "failed to start filler: "+err.Error(), http.StatusInternalServerError)
@@ -114,7 +108,6 @@ func (h ApplyHandler) Scrape(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Read the result file
 	resultBytes, err := os.ReadFile(outFile)
 	if err != nil {
 		http.Error(w, "failed to read scrape result: "+err.Error(), http.StatusInternalServerError)
@@ -143,16 +136,11 @@ func (h ApplyHandler) Scrape(w http.ResponseWriter, r *http.Request) {
 }
 
 // ─── POST /api/apply/fill ──────────────────────────────────────────────────────
-//
-// Spawns filler.js --fill with the reviewed fields. Runs detached so the
-// browser window stays open for the user.
 
 type fillRequest struct {
-	JobID         int64       `json:"jobId"`
-	URL           string      `json:"url"`
-	ResumePdfPath string      `json:"resumePdfPath"`
-	ResumeText    string      `json:"resumeText"`
-	Fields        []fillField `json:"fields"`
+	JobID  int64       `json:"jobId"`
+	URL    string      `json:"url"`
+	Fields []fillField `json:"fields"`
 }
 
 func (h ApplyHandler) Fill(w http.ResponseWriter, r *http.Request) {
@@ -176,19 +164,18 @@ func (h ApplyHandler) Fill(w http.ResponseWriter, r *http.Request) {
 		tmpDir = os.TempDir()
 	}
 
-	// Resolve resume path
-	resumePath, resumeTempWritten, err := resolveResumePath(req.ResumePdfPath, req.ResumeText, tmpDir)
-	if err != nil {
-		http.Error(w, "resume error: "+err.Error(), http.StatusInternalServerError)
-		return
+	// Filter out empty fields — no resume file injection needed
+	var fields []fillField
+	for _, f := range req.Fields {
+		if strings.TrimSpace(f.Value) == "" {
+			continue
+		}
+		fields = append(fields, f)
 	}
-
-	// Build fill fields — inject resume into the file field
-	fillFields := buildFillFields(req.Fields, resumePath)
 
 	jobPayload := map[string]any{
 		"url":    req.URL,
-		"fields": fillFields,
+		"fields": fields,
 	}
 	jobJSON, _ := json.MarshalIndent(jobPayload, "", "  ")
 
@@ -225,69 +212,12 @@ func (h ApplyHandler) Fill(w http.ResponseWriter, r *http.Request) {
 		case <-time.After(15 * time.Minute):
 		}
 		_ = os.Remove(jobFilePath)
-		if resumeTempWritten && resumePath != "" {
-			_ = os.Remove(resumePath)
-		}
 	}()
 
 	writeJSON(w, map[string]any{"ok": true, "pid": cmd.Process.Pid})
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-func resolveResumePath(pdfPath, resumeText, tmpDir string) (path string, tempWritten bool, err error) {
-	if strings.TrimSpace(pdfPath) != "" {
-		if _, statErr := os.Stat(pdfPath); statErr == nil {
-			return pdfPath, false, nil
-		}
-		// PDF path stale — fall through
-	}
-	if strings.TrimSpace(resumeText) != "" {
-		p := filepath.Join(tmpDir, fmt.Sprintf("jobhunt-resume-%d.txt", time.Now().UnixMilli()))
-		if writeErr := os.WriteFile(p, []byte(resumeText), 0o600); writeErr != nil {
-			return "", false, writeErr
-		}
-		return p, true, nil
-	}
-	return "", false, nil
-}
-
-func buildFillFields(fields []fillField, resumePath string) []fillField {
-	out := make([]fillField, 0, len(fields)+1)
-	resumeInjected := false
-
-	for _, f := range fields {
-		if f.Type == "file" || f.IsFile {
-			if resumePath != "" {
-				out = append(out, fillField{
-					Selector: f.Selector,
-					Label:    f.Label,
-					Type:     "file",
-					Value:    resumePath,
-					IsFile:   true,
-				})
-				resumeInjected = true
-			}
-			continue
-		}
-		if strings.TrimSpace(f.Value) == "" {
-			continue
-		}
-		out = append(out, f)
-	}
-
-	// Append resume if no file field was found but we have a path
-	if !resumeInjected && resumePath != "" {
-		out = append(out, fillField{
-			Selector: "input[type=\"file\"]",
-			Label:    "Resume",
-			Type:     "file",
-			Value:    resumePath,
-			IsFile:   true,
-		})
-	}
-	return out
-}
 
 func findFillerAndNode() (script string, node string, err error) {
 	script, err = findFillerScript()

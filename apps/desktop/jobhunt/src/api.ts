@@ -222,8 +222,6 @@ export async function scrapeForm(jobId: number, url: string, atsType: string): P
 export interface FillRequest {
   jobId: number;
   url: string;
-  resumePdfPath?: string;
-  resumeText?: string;
   fields: ScrapedField[];
 }
 

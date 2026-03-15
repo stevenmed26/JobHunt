@@ -54,10 +54,8 @@ export interface ApplicantProfile {
   // Docs (stored as text — user pastes plain-text resume / cover letter)
   resumeText: string;
   coverLetterText: string;
-  resumeFileName: string;     // display only (for the txt/paste version)
+  resumeFileName: string;
   coverLetterFileName: string;
-  resumePdfPath: string;      // absolute path to the actual PDF on disk
-  resumePdfName: string;      // display only
 }
 
 // A single application in the review queue
@@ -159,8 +157,6 @@ function emptyProfile(): ApplicantProfile {
     coverLetterText: "",
     resumeFileName: "",
     coverLetterFileName: "",
-    resumePdfPath: "",
-    resumePdfName: "",
   };
 }
 
@@ -803,9 +799,8 @@ export default function AutoApply({ onBack }: { onBack: () => void }) {
   const [apiKeyInput, setApiKeyInput] = useState("");
   const [apiKeyError, setApiKeyError] = useState("");
 
-  const resumeInputRef    = useRef<HTMLInputElement>(null);
-  const resumePdfInputRef = useRef<HTMLInputElement>(null);
-  const coverInputRef     = useRef<HTMLInputElement>(null);
+  const resumeInputRef = useRef<HTMLInputElement>(null);
+  const coverInputRef  = useRef<HTMLInputElement>(null);
 
   // Check on mount whether a key is already stored
   useEffect(() => {
@@ -945,11 +940,9 @@ export default function AutoApply({ onBack }: { onBack: () => void }) {
 
     try {
       await fillForm({
-        jobId:         draft.jobId,
-        url:           draft.url,
-        resumePdfPath: profile.resumePdfPath,
-        resumeText:    profile.resumePdfPath ? "" : profile.resumeText,
-        fields:        fieldsToFill,
+        jobId:   draft.jobId,
+        url:     draft.url,
+        fields:  fieldsToFill,
       });
       setQueue((q) =>
         q.map((d) => d.jobId === jobId ? { ...d, applying: false, status: "submitted" } : d)
@@ -1081,7 +1074,6 @@ export default function AutoApply({ onBack }: { onBack: () => void }) {
           profile={profile}
           updateProfile={updateProfile}
           resumeInputRef={resumeInputRef}
-          resumePdfInputRef={resumePdfInputRef}
           coverInputRef={coverInputRef}
           handleFileUpload={handleFileUpload}
           apiKeySet={apiKeySet}
@@ -1195,7 +1187,6 @@ function ProfileTab({
   profile,
   updateProfile,
   resumeInputRef,
-  resumePdfInputRef,
   coverInputRef,
   handleFileUpload,
   apiKeySet,
@@ -1208,7 +1199,6 @@ function ProfileTab({
   profile: ApplicantProfile;
   updateProfile: (key: keyof ApplicantProfile, value: any) => void;
   resumeInputRef: React.RefObject<HTMLInputElement | null>;
-  resumePdfInputRef: React.RefObject<HTMLInputElement | null>;
   coverInputRef: React.RefObject<HTMLInputElement | null>;
   handleFileUpload: (
     file: File,
@@ -1345,60 +1335,13 @@ function ProfileTab({
       <div className="sectionHead">Documents</div>
       <div style={{ padding: "14px 14px", display: "flex", flexDirection: "column", gap: 16 }}>
         <p className="help" style={{ marginTop: 0 }}>
-          Upload your formatted PDF resume for form uploads, plus a plain-text version for Groq to read when filling fields.
+          Paste your resume as plain text — Groq uses it to fill fields and write cover letters. Upload your PDF directly on each job form.
         </p>
 
-        {/* Resume — PDF for uploading + txt/paste for Groq context */}
+        {/* Resume — plain text for Groq context; user uploads PDF manually on the form */}
         <div>
-          {/* PDF upload row */}
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-            <span style={{ fontSize: 13, fontWeight: 600 }}>Resume PDF</span>
-            {profile.resumePdfName ? (
-              <span style={{ fontSize: 11, color: "rgba(30,215,96,0.8)", padding: "2px 8px", borderRadius: 999, border: "1px solid rgba(30,215,96,0.3)" }}>
-                {profile.resumePdfName}
-              </span>
-            ) : (
-              <span style={{ fontSize: 11, color: "rgba(255,255,255,0.35)" }}>
-                No PDF — will upload plain text instead
-              </span>
-            )}
-            <input
-              ref={resumePdfInputRef}
-              type="file"
-              accept=".pdf,.doc,.docx"
-              style={{ display: "none" }}
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) {
-                  // Tauri exposes the real filesystem path on the File object
-                  // via a non-standard property. We store it for the engine to use.
-                  const filePath: string = (f as any).path || (f as any)._path || f.name;
-                  updateProfile("resumePdfPath", filePath);
-                  updateProfile("resumePdfName", f.name);
-                }
-              }}
-            />
-            <button
-              className="btn miniBtn"
-              style={{ marginLeft: "auto" }}
-              onClick={() => resumePdfInputRef.current?.click()}
-            >
-              Upload PDF
-            </button>
-            {profile.resumePdfName && (
-              <button
-                className="btn miniBtn"
-                style={{ opacity: 0.5 }}
-                onClick={() => { updateProfile("resumePdfPath", ""); updateProfile("resumePdfName", ""); }}
-              >
-                Remove
-              </button>
-            )}
-          </div>
-
-          {/* Plain text for Groq context */}
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
-            <span style={{ fontSize: 12, color: "rgba(255,255,255,0.55)" }}>Plain text (for AI context)</span>
+            <span style={{ fontSize: 13, fontWeight: 600 }}>Resume</span>
             {profile.resumeFileName && (
               <span style={{ fontSize: 11, color: "rgba(30,215,96,0.8)", padding: "2px 8px", borderRadius: 999, border: "1px solid rgba(30,215,96,0.3)" }}>
                 {profile.resumeFileName}

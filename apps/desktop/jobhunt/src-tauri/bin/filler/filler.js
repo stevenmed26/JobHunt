@@ -79,6 +79,16 @@ async function runScrape() {
     await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
     await page.waitForTimeout(1500); // let React render
 
+    // Click "Enter manually" for cover letter to expose the textarea before scraping
+    const enterManuallyBtns = await page.locator('button:has-text("Enter manually"), a:has-text("Enter manually")').all();
+    for (const btn of enterManuallyBtns) {
+      if (await btn.isVisible().catch(() => false)) {
+        await btn.click();
+        await page.waitForTimeout(400);
+        log('  clicked "Enter manually" to expose textarea');
+      }
+    }
+
     const fields = await page.evaluate(() => {
       const results = [];
       const seen    = new Set();
@@ -154,7 +164,7 @@ async function runScrape() {
       // ── Collect all input/select/textarea elements ──────────────────────────
 
       const inputs = Array.from(document.querySelectorAll(
-        'input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="checkbox"]):not([type="radio"]):not([type="search"]), ' +
+        'input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="checkbox"]):not([type="radio"]):not([type="search"]):not([type="file"]), ' +
         'select, textarea'
       ));
 
@@ -332,9 +342,125 @@ async function runFill() {
     await page.waitForTimeout(1500);
 
     log('Starting fill...');
+
+    // ── Pre-fill: handle Greenhouse special widgets before main loop ───────────
+
+    // Cover letter — verbose debug version
+    const coverField = job.fields.find(f =>
+      f.value &&
+      (f.label.toLowerCase().includes('cover') || f.label.toLowerCase().includes('letter'))
+    );
+
+    log(`DEBUG: cover field found: ${!!coverField}`);
+    if (coverField) {
+      log(`DEBUG: cover label="${coverField.label}" selector="${coverField.selector}" value_len=${coverField.value?.length}`);
+    }
+
+    if (coverField && coverField.value) {
+      try {
+        // Step 1: dump all buttons on page to see what's available
+        const allBtns = await page.locator('button, a').all();
+        log(`DEBUG: total buttons/links on page: ${allBtns.length}`);
+        for (const btn of allBtns) {
+          const txt = (await btn.textContent().catch(() => '')).trim();
+          if (txt) log(`DEBUG: button text: "${txt}"`);
+        }
+
+        // Step 2: click "Enter manually" buttons
+        const enterBtns = await page.locator(
+          'button:has-text("Enter manually"), a:has-text("Enter manually"), [data-source="paste"]'
+        ).all();
+        log(`DEBUG: "Enter manually" buttons found: ${enterBtns.length}`);
+        for (const btn of enterBtns) {
+          const vis = await btn.isVisible().catch(() => false);
+          log(`DEBUG: Enter manually button visible: ${vis}`);
+          if (vis) {
+            await btn.click();
+            await page.waitForTimeout(600);
+            log('cover letter: clicked Enter manually');
+          }
+        }
+
+        // Step 3: dump all textareas now visible
+        const allTAs = await page.locator('textarea').all();
+        log(`DEBUG: textareas on page after click: ${allTAs.length}`);
+        for (const ta of allTAs) {
+          const vis = await ta.isVisible().catch(() => false);
+          const name = await ta.getAttribute('name').catch(() => '');
+          const id   = await ta.getAttribute('id').catch(() => '');
+          const ph   = await ta.getAttribute('placeholder').catch(() => '');
+          log(`DEBUG: textarea id="${id}" name="${name}" placeholder="${ph}" visible=${vis}`);
+        }
+
+        // Step 4: try exact scraped selector
+        let coverLoc = null;
+        if (coverField.selector) {
+          const exact = page.locator(coverField.selector).first();
+          const cnt = await exact.count();
+          const vis = cnt > 0 && await exact.isVisible().catch(() => false);
+          log(`DEBUG: exact selector "${coverField.selector}" count=${cnt} visible=${vis}`);
+          if (vis) coverLoc = exact;
+        }
+
+        // Step 5: named fallbacks
+        if (!coverLoc) {
+          const fallbacks = [
+            'textarea[name*="cover" i]',
+            '#cover_letter_text',
+            '#cover_letter',
+            'textarea[placeholder*="cover" i]',
+            'textarea[placeholder*="letter" i]',
+            'textarea[class*="cover" i]',
+          ];
+          for (const sel of fallbacks) {
+            const l = page.locator(sel).first();
+            const cnt = await l.count();
+            if (cnt > 0) {
+              const vis = await l.isVisible().catch(() => false);
+              log(`DEBUG: fallback "${sel}" count=${cnt} visible=${vis}`);
+              if (vis) { coverLoc = l; break; }
+            }
+          }
+        }
+
+        // Step 6: any visible textarea as last resort
+        if (!coverLoc) {
+          const visTextareas = await page.locator('textarea:visible').all();
+          log(`DEBUG: visible textareas for last resort: ${visTextareas.length}`);
+          if (visTextareas.length > 0) {
+            coverLoc = visTextareas[visTextareas.length - 1];
+          }
+        }
+
+        if (coverLoc) {
+          await coverLoc.fill(coverField.value);
+          log(`cover letter: filled ${coverField.value.substring(0, 60)}...`);
+        } else {
+          log('WARN: cover letter textarea not found after all attempts');
+          // Dump full page HTML snippet around cover letter area for diagnosis
+          const html = await page.evaluate(() => {
+            const el = document.querySelector('[class*="cover"], [id*="cover"], [data-field*="cover"]');
+            return el ? el.outerHTML.substring(0, 500) : '(no cover element found)';
+          });
+          log(`DEBUG: cover area HTML: ${html}`);
+        }
+      } catch (e) {
+        log(`WARN: cover letter failed: ${e.message}
+${e.stack}`);
+      }
+    }
+
+    // ── Main field loop ────────────────────────────────────────────────────────
+
     let filled = 0, skipped = 0;
 
     for (const field of job.fields) {
+      // Skip cover letter — handled in pre-fill above
+      if (field.value && (field.label.toLowerCase().includes('cover') || field.label.toLowerCase().includes('letter'))) {
+        skipped++; continue;
+      }
+      // Skip file fields entirely — user uploads resume manually
+      if (field.isFile || field.type === 'file') { skipped++; continue; }
       if (!field.value && !field.isFile) { skipped++; continue; }
 
       try {
@@ -394,14 +520,6 @@ async function fillField(page, field) {
   if (!found) {
     log(`MISS: "${field.label}" (${selector})`);
     return false;
-  }
-
-  // File upload
-  if (isFile) {
-    if (!fs.existsSync(value)) { log(`WARN: file not found: ${value}`); return false; }
-    await loc.setInputFiles(value);
-    log(`file: "${field.label}" -> ${path.basename(value)}`);
-    return true;
   }
 
   // React custom select (Greenhouse EEO widgets etc.)
