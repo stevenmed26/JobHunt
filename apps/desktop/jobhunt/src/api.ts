@@ -57,7 +57,6 @@ export type EngineConfig = {
     penalties: Penalty[];
   };
   email: EngineEmailConfig;
-
   sources: EngineSourcesConfig;
 };
 
@@ -65,7 +64,7 @@ export async function getConfig(): Promise<EngineConfig> {
   const res = await fetch(`${ENGINE_BASE}/config`);
   if (!res.ok) throw new Error(await res.text());
   const raw = await res.json();
-  return normalizeConfig(raw)
+  return normalizeConfig(raw);
 }
 
 export async function putConfig(cfg: EngineConfig): Promise<EngineConfig> {
@@ -83,6 +82,15 @@ export async function deleteJob(id: number) {
   const res = await fetch(`${ENGINE_BASE}/jobs/${id}`, { method: "DELETE" });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
+}
+
+// Returns the scraped job description HTML/text stored in the engine DB.
+// Returns an empty string if the job has no description yet.
+export async function getJobDescription(id: number): Promise<string> {
+  const res = await fetch(`${ENGINE_BASE}/jobs/${id}/description`);
+  if (!res.ok) return "";
+  const data = await res.json();
+  return data.description ?? "";
 }
 
 export type ScrapeStatus = {
@@ -122,7 +130,9 @@ export type SourceCompany = {
 export type EngineSourcesConfig = {
   greenhouse: { enabled: boolean; companies: SourceCompany[] };
   lever: { enabled: boolean; companies: SourceCompany[] };
-}
+  workday: { enabled: boolean; companies: SourceCompany[] };
+  smartrecruiters: { enabled: boolean; companies: SourceCompany[] };
+};
 
 export async function setImapPassword(password: string) {
   const res = await fetch(`${ENGINE_BASE}/api/secrets/imap`, {
@@ -133,5 +143,139 @@ export async function setImapPassword(password: string) {
   if (!res.ok) throw new Error(await res.text());
 }
 
+// ─── LLM proxy (Groq — goes through engine to avoid Tauri CSP + keep key secure) ─
 
+export interface LLMMessage {
+  role: "user" | "assistant";
+  content: string;
+}
 
+export interface LLMRequest {
+  system?: string;
+  max_tokens?: number;
+  messages: LLMMessage[];
+}
+
+// Calls the engine's /api/llm proxy which forwards to Groq.
+// Returns the raw text content from the model.
+export async function callLLM(req: LLMRequest): Promise<string> {
+  const res = await fetch(`${ENGINE_BASE}/api/llm`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `LLM proxy error: ${res.status}`);
+  }
+  const data = await res.json();
+  // Engine normalizes Groq response to { text: "..." }
+  return data.text ?? "";
+}
+
+export async function setGroqAPIKey(apiKey: string): Promise<void> {
+  const res = await fetch(`${ENGINE_BASE}/api/secrets/groq`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ api_key: apiKey }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+}
+
+export async function getGroqKeyStatus(): Promise<boolean> {
+  const res = await fetch(`${ENGINE_BASE}/api/secrets/groq/status`);
+  if (!res.ok) return false;
+  const data = await res.json();
+  return data.has_key === true;
+}
+
+// ─── Apply — two-phase scrape + fill ─────────────────────────────────────────
+
+// A field scraped from the real ATS form by filler.js --scrape
+export interface ScrapedField {
+  selector: string;       // exact CSS selector from the live DOM
+  label: string;          // human-readable label text
+  type: string;           // text|email|tel|select|textarea|file|react-select
+  required: boolean;
+  options: { value: string; label: string }[];  // for select/react-select
+  value: string;          // filled in by Groq, editable by user
+  isFile?: boolean;
+  isReactSelect?: boolean;
+}
+
+// Phase 1: scrape the form fields from the live URL
+export async function scrapeForm(jobId: number, url: string, atsType: string): Promise<ScrapedField[]> {
+  const res = await fetch(`${ENGINE_BASE}/api/apply/scrape`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jobId, url, atsType }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `Scrape error: ${res.status}`);
+  }
+  const data = await res.json();
+  return data.fields as ScrapedField[];
+}
+
+// Phase 2: fill the form using exact selectors + reviewed values
+export interface FillRequest {
+  jobId: number;
+  url: string;
+  fields: ScrapedField[];
+}
+
+export async function fillForm(req: FillRequest): Promise<{ ok: boolean; pid?: number }> {
+  const res = await fetch(`${ENGINE_BASE}/api/apply/fill`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `Fill error: ${res.status}`);
+  }
+  return res.json();
+}
+
+// ─── Company search ───────────────────────────────────────────────────────────
+
+export interface CompanyResult {
+  name: string;
+  slug: string;
+  ats: "greenhouse" | "lever";
+  jobUrl: string;
+}
+
+export async function searchCompanies(q: string, ats?: "greenhouse" | "lever"): Promise<CompanyResult[]> {
+  const params = new URLSearchParams({ q });
+  if (ats) params.set("ats", ats);
+  const res = await fetch(`${ENGINE_BASE}/api/companies/search?${params}`);
+  if (!res.ok) throw new Error(await res.text());
+  const data = await res.json();
+  return data.results as CompanyResult[];
+}
+
+// ─── Company discovery ────────────────────────────────────────────────────────
+
+export async function discoverCompanies(
+  source: "lever" | "greenhouse",
+  keyword?: string
+): Promise<{ results: CompanyResult[]; total: number }> {
+  const params = new URLSearchParams({ source });
+  if (keyword) params.set("q", keyword);
+  const res = await fetch(`${ENGINE_BASE}/api/companies/discover?${params}`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function extractCompaniesFromText(text: string): Promise<CompanyResult[]> {
+  const res = await fetch(`${ENGINE_BASE}/api/companies/extract`, {
+    method: "POST",
+    headers: { "Content-Type": "text/plain" },
+    body: text,
+  });
+  if (!res.ok) throw new Error(await res.text());
+  const data = await res.json();
+  return data.results as CompanyResult[];
+}

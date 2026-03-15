@@ -26,4 +26,7 @@ type Deps struct {
 
 	// Scrape entrypoint (inject for testability)
 	RunPollOnce func(db *sql.DB, cfg config.Config, onNewJob func()) (added int, err error)
+
+	// DataDir is passed to ApplyHandler for temp file storage
+	DataDir string
 }

@@ -3,6 +3,9 @@ import { useEffect, useMemo, useState } from "react";
 import { events, getJobs, seedJob, deleteJob } from "./api";
 import Preferences from "./Preferences";
 import Scraping from "./Scraping";
+import AutoApply from "./AutoApply";
+import { useAutoApplyQueue } from "./useApplyQueue";
+import ErrorBoundary from "./ErrorBoundary";
 import Select from "./ui/Select";
 import { Command } from "@tauri-apps/plugin-shell";
 import { check } from "@tauri-apps/plugin-updater";
@@ -10,12 +13,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 async function checkForUpdates() {
   const update = await check();
-  if (!update) {
-    console.log("No update available");
-    return;
-  }
-  console.log("Update available:", update.version);
-
+  if (!update) return;
   await update.downloadAndInstall();
 }
 
@@ -59,24 +57,25 @@ type Job = {
   companyLogoURL?: string;
 };
 
-type SortKey = "score" | "date" | "company" | "title";
+type SortKey   = "score" | "date" | "company" | "title";
 type WindowKey = "24h" | "7d" | "all";
+type View      = "jobs" | "prefs" | "scrape" | "apply";
 
 export default function App() {
   const DEV_TOOLS = import.meta.env.DEV;
 
-  const [sort, setSort] = useState<SortKey>("score");
+  const [sort,      setSort]      = useState<SortKey>("score");
   const [windowKey, setWindowKey] = useState<WindowKey>("7d");
+  const [view,      setView]      = useState<View>("jobs");
+  const [jobs,      setJobs]      = useState<Job[]>([]);
+  const [err,       setErr]       = useState("");
 
-  const [view, setView] = useState<"jobs" | "prefs" | "scrape">("jobs");
-  const [jobs, setJobs] = useState<Job[]>([]);
-  const [err, setErr] = useState<string>("");
+  const { addToQueue, queueCount } = useAutoApplyQueue();
 
   checkForUpdates().catch(console.error);
 
   const params = useMemo(() => {
-    const p = new URLSearchParams({ sort, window: windowKey });
-    return p.toString();
+    return new URLSearchParams({ sort, window: windowKey }).toString();
   }, [sort, windowKey]);
 
   async function refresh() {
@@ -90,9 +89,7 @@ export default function App() {
     }
   }
 
-  useEffect(() => {
-    startEngineDebug().catch(console.error);
-  }, []);
+  useEffect(() => { startEngineDebug().catch(console.error); }, []);
 
   useEffect(() => {
     refresh();
@@ -102,131 +99,141 @@ export default function App() {
     return stop;
   }, [params]);
 
-  if (view === "prefs") return <Preferences onBack={() => setView("jobs")} />;
-  if (view === "scrape") return <Scraping onBack={() => setView("jobs")} />;
+  if (view === "prefs")  return <ErrorBoundary name="Preferences"><Preferences onBack={() => setView("jobs")} /></ErrorBoundary>;
+  if (view === "scrape") return <ErrorBoundary name="Scraping"><Scraping onBack={() => setView("jobs")} /></ErrorBoundary>;
+  if (view === "apply")  return <ErrorBoundary name="Auto Apply"><AutoApply onBack={() => setView("jobs")} /></ErrorBoundary>;
 
   return (
-  <div className="app">
-    <div className="topbar">
-      <div className="brand">
-        <h1>JobHunt</h1>
+    <div className="app">
+      <div className="topbar">
+        <div className="brand">
+          <h1>JobHunt</h1>
+        </div>
+        <div className="toolbar">
+          <button className="btn btnPrimary" onClick={refresh}>Refresh</button>
+          {DEV_TOOLS && (
+            <button className="btn" onClick={() => seedJob().then(refresh).catch((e) => setErr(String(e)))}>
+              Seed
+            </button>
+          )}
+          <ExportDbButton />
+          <button className="btn" onClick={() => setView("prefs")}>Preferences</button>
+          <button className="btn" onClick={() => setView("scrape")}>Scraping</button>
+          <button className="btn" onClick={() => setView("apply")} style={{ position: "relative" }}>
+            Auto Apply
+            {queueCount > 0 && (
+              <span style={{
+                position: "absolute", top: -6, right: -6,
+                fontSize: 10, fontWeight: 700, lineHeight: "16px",
+                background: "rgba(253,72,37,0.9)", color: "white",
+                borderRadius: 999, padding: "1px 5px", minWidth: 16,
+                textAlign: "center", pointerEvents: "none",
+              }}>
+                {queueCount}
+              </span>
+            )}
+          </button>
+        </div>
       </div>
 
-      <div className="toolbar">
-        <button className="btn btnPrimary" onClick={() => refresh()}>Refresh</button>
-        {DEV_TOOLS && (<button className="btn" onClick={() => seedJob().then(refresh).catch((e) => setErr(String(e)))}>
-          Seed
-        </button>
-        )}
-        <ExportDbButton />
-        <button className="btn" onClick={() => setView("prefs")}>Preferences</button>
-        <button className="btn" onClick={() => setView("scrape")}>Scraping</button>
-      </div>
-    </div>
-
-    <div className="toolbarRow">
-      <div className="tool">
-        <div className="toolLabel">Sort</div>
-        <Select
-          value={sort}
-          onChange={setSort}
-          options={[
-            { value: "score", label: "Score" },
-            { value: "date", label: "Date" },
+      <div className="toolbarRow">
+        <div className="tool">
+          <div className="toolLabel">Sort</div>
+          <Select value={sort} onChange={setSort} options={[
+            { value: "score",   label: "Score" },
+            { value: "date",    label: "Date" },
             { value: "company", label: "Company" },
-            { value: "title", label: "Title" },
-          ]}
-          width={200}
-        />
-      </div>
-
-      <div className="tool">
-        <div className="toolLabel">Time</div>
-        <Select
-          value={windowKey}
-          onChange={setWindowKey}
-          options={[
+            { value: "title",   label: "Title" },
+          ]} width={200} />
+        </div>
+        <div className="tool">
+          <div className="toolLabel">Time</div>
+          <Select value={windowKey} onChange={setWindowKey} options={[
             { value: "24h", label: "Last 24 hours" },
-            { value: "7d", label: "Last week" },
+            { value: "7d",  label: "Last week" },
             { value: "all", label: "All time" },
-          ]}
-          width={200}
-        />
+          ]} width={200} />
+        </div>
       </div>
-    </div>
 
-    {err && (
-      <div className="error">
-        Engine not reachable yet? ({err})
-        <div className="small">Expected: http://127.0.0.1:38471/health</div>
-      </div>
-    )}
+      {err && (
+        <div className="error">
+          Engine not reachable yet? ({err})
+          <div className="small">Expected: http://127.0.0.1:38471/health</div>
+        </div>
+      )}
 
-    <div className="panel">
-      {jobs.length === 0 && <div style={{ padding: 14 }} className="small">No jobs yet.</div>}
-
-      {jobs.map((j) => {
-        const logoSrc =
-          j.companyLogoURL && j.companyLogoURL.startsWith("/")
+      <div className="panel">
+        {jobs.length === 0 && (
+          <div style={{ padding: 14 }} className="small">No jobs yet.</div>
+        )}
+        {jobs.map((j) => {
+          const logoSrc = j.companyLogoURL?.startsWith("/")
             ? `http://127.0.0.1:38471${j.companyLogoURL}`
             : j.companyLogoURL;
 
-        return (
-          <div key={j.id} className="listRow">
-            <div className="logo">
-              {logoSrc ? (
-                <img
-                  src={logoSrc}
-                  alt={j.company}
-                  loading="lazy"
-                  referrerPolicy="no-referrer"
-                  crossOrigin="anonymous"
-                  onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
-                />
-              ) : null}
-            </div>
-
-            <div className="jobMain">
-              <p className="jobTitle" title={j.title}>{j.title}</p>
-              <div className="jobMeta">
-                <span className="company">{j.company}</span><span className="dot">·</span>
-                <span>{j.location}</span><span className="dot">·</span>
-                <span>{j.workMode}</span><span className="dot">·</span>
-                <span>{new Date(j.date).toLocaleDateString()}</span><span className="dot">·</span>
-                <span>score {j.score}</span>
+          return (
+            <div key={j.id} className="listRow">
+              <div className="logo">
+                {logoSrc && (
+                  <img
+                    src={logoSrc}
+                    alt={j.company}
+                    loading="lazy"
+                    referrerPolicy="no-referrer"
+                    crossOrigin="anonymous"
+                    onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
+                  />
+                )}
               </div>
 
-              {(j.tags?.length || j.seenFromSource) && (
-                <div className="tags">
-                  {j.tags?.slice(0, 6).map((t) => (
-                    <span key={t} className="tag">{t}</span>
-                  ))}
-
-                  {j.seenFromSource && (
-                    <span className="tag tagSource">{j.seenFromSource}</span>
-                  )}
+              <div className="jobMain">
+                <p className="jobTitle" title={j.title}>{j.title}</p>
+                <div className="jobMeta">
+                  <span className="company">{j.company}</span>
+                  <span className="dot">·</span>
+                  <span>{j.location}</span>
+                  <span className="dot">·</span>
+                  <span>{j.workMode}</span>
+                  <span className="dot">·</span>
+                  <span>{new Date(j.date).toLocaleDateString()}</span>
+                  <span className="dot">·</span>
+                  <span>score {j.score}</span>
                 </div>
-              )}
-            </div>
+                {(j.tags?.length || j.seenFromSource) && (
+                  <div className="tags">
+                    {j.tags?.slice(0, 6).map((t) => (
+                      <span key={t} className="tag">{t}</span>
+                    ))}
+                    {j.seenFromSource && (
+                      <span className="tag tagSource">{j.seenFromSource}</span>
+                    )}
+                  </div>
+                )}
+              </div>
 
-            <div className="actions">
-              <a className="link" href={j.url} target="_blank" rel="noreferrer">Apply</a>
-              <button
-                className="iconBtn"
-                onClick={() => {
-                  if (!confirm(`Remove "${j.title}"?`)) return;
-                  deleteJob(j.id).then(refresh).catch((e) => setErr(String(e)));
-                }}
-                title="Remove"
-                aria-label={`Remove ${j.title}`}
-              >
-                ×
-              </button>
+              <div className="actions">
+                <button
+                  className="btn btnPrimary"
+                  style={{ fontSize: 12, padding: "5px 14px" }}
+                  onClick={() => { addToQueue({ id: j.id, company: j.company, title: j.title, url: j.url }); setView("apply"); }}
+                >
+                  Apply
+                </button>
+                <a className="link" href={j.url} target="_blank" rel="noreferrer" style={{ fontSize: 13 }} title="Open job posting">↗</a>
+                <button
+                  className="iconBtn"
+                  onClick={() => { if (!confirm(`Remove "${j.title}"?`)) return; deleteJob(j.id).then(refresh).catch((e) => setErr(String(e))); }}
+                  title="Remove"
+                  aria-label={`Remove ${j.title}`}
+                >
+                  ×
+                </button>
+              </div>
             </div>
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
     </div>
-  </div>
-);
+  );
 }
