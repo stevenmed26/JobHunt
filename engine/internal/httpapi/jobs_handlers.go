@@ -33,6 +33,27 @@ func (h JobsHandler) List(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, jobs)
 }
 
+// Description handles GET /jobs/{id}/description
+// Returns { "id": 42, "description": "..." }
+func (h JobsHandler) Description(w http.ResponseWriter, r *http.Request) {
+	// Path is /jobs/{id}/description — strip both prefix and suffix
+	path := strings.TrimPrefix(r.URL.Path, "/jobs/")
+	path = strings.TrimSuffix(path, "/description")
+	id, err := strconv.ParseInt(strings.TrimSpace(path), 10, 64)
+	if err != nil || id <= 0 {
+		http.Error(w, "invalid id", 400)
+		return
+	}
+
+	desc, err := store.GetJobDescription(r.Context(), h.DB, id)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+
+	writeJSON(w, map[string]any{"id": id, "description": desc})
+}
+
 func (h JobsHandler) DeleteByPath(w http.ResponseWriter, r *http.Request) {
 	idStr := strings.TrimPrefix(r.URL.Path, "/jobs/")
 	id, err := strconv.ParseInt(idStr, 10, 64)

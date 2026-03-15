@@ -122,9 +122,16 @@ func InsertJobIfNew(ctx context.Context, db *sql.DB, j types.JobRow) (bool, erro
 
 	tagsB, _ := json.Marshal(j.Tags)
 
+	// Truncate description to 64 KB — large HTML descriptions can bloat the DB
+	// but we still want enough content for Claude to read.
+	desc := j.Description
+	if len(desc) > 65536 {
+		desc = desc[:65536]
+	}
+
 	res, err := db.ExecContext(ctx, `
-INSERT OR IGNORE INTO jobs(company, title, location, work_mode, url, score, tags, date, source_id, seen_from_source, logo_key)
-VALUES(?,?,?,?,?,?,?,?,?,?,?);`,
+INSERT OR IGNORE INTO jobs(company, title, location, work_mode, url, score, tags, date, source_id, seen_from_source, logo_key, description)
+VALUES(?,?,?,?,?,?,?,?,?,?,?,?);`,
 		j.Company,
 		j.Title,
 		j.Location,
@@ -136,6 +143,7 @@ VALUES(?,?,?,?,?,?,?,?,?,?,?);`,
 		j.SourceID,
 		j.SeenFromSource,
 		j.CompanyLogoURL,
+		desc,
 	)
 	if err != nil {
 		return false, err
@@ -152,7 +160,6 @@ WHERE source_id = ?
 		)
 	}
 
-	//log.Println("New job added to DB")
 	return n > 0, nil
 }
 
@@ -175,6 +182,7 @@ func jobRowFromLead(lead domain.JobLead, s rank.YAMLScorer) types.JobRow {
 		Title:          strings.TrimSpace(lead.Title),
 		Location:       strings.TrimSpace(lead.LocationRaw),
 		WorkMode:       strings.TrimSpace(lead.WorkMode),
+		Description:    lead.Description, // ← now flows through
 		URL:            strings.TrimSpace(lead.URL),
 		Score:          score,
 		Tags:           tags,

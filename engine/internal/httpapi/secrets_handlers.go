@@ -31,3 +31,26 @@ func (h SecretsHandler) SetIMAPPassword(w http.ResponseWriter, r *http.Request) 
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// SetClaudeAPIKey stores the key in the OS keyring.
+// POST /api/secrets/claude  { "api_key": "sk-ant-..." }
+func (h SecretsHandler) SetClaudeAPIKey(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		APIKey string `json:"api_key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid json", http.StatusBadRequest)
+		return
+	}
+	if err := secrets.SetClaudeAPIKey(req.APIKey); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true})
+}
+
+// GetClaudeKeyStatus returns whether a key is stored without exposing the value.
+// GET /api/secrets/claude/status  → { "has_key": true }
+func (h SecretsHandler) GetClaudeKeyStatus(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, map[string]any{"has_key": secrets.HasClaudeAPIKey()})
+}

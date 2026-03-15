@@ -3,9 +3,8 @@ import { useEffect, useMemo, useState } from "react";
 import { events, getJobs, seedJob, deleteJob } from "./api";
 import Preferences from "./Preferences";
 import Scraping from "./Scraping";
+import AutoApply, { useAutoApplyQueue } from "./AutoApply";
 import Select from "./ui/Select";
-import AutoApply from "./AutoApply";
-import addToQueue from "./AutoApply"
 import { Command } from "@tauri-apps/plugin-shell";
 import { check } from "@tauri-apps/plugin-updater";
 import { invoke } from "@tauri-apps/api/core";
@@ -17,7 +16,6 @@ async function checkForUpdates() {
     return;
   }
   console.log("Update available:", update.version);
-
   await update.downloadAndInstall();
 }
 
@@ -63,16 +61,19 @@ type Job = {
 
 type SortKey = "score" | "date" | "company" | "title";
 type WindowKey = "24h" | "7d" | "all";
+type View = "jobs" | "prefs" | "scrape" | "apply";
 
 export default function App() {
   const DEV_TOOLS = import.meta.env.DEV;
 
   const [sort, setSort] = useState<SortKey>("score");
   const [windowKey, setWindowKey] = useState<WindowKey>("7d");
-
-  const [view, setView] = useState<"jobs" | "prefs" | "scrape">("jobs");
+  const [view, setView] = useState<View>("jobs");
   const [jobs, setJobs] = useState<Job[]>([]);
   const [err, setErr] = useState<string>("");
+
+  // Auto-apply queue hook — persists to localStorage
+  const { addToQueue, queueCount } = useAutoApplyQueue();
 
   checkForUpdates().catch(console.error);
 
@@ -109,146 +110,185 @@ export default function App() {
   if (view === "apply") return <AutoApply onBack={() => setView("jobs")} />;
 
   return (
-  <div className="app">
-    <div className="topbar">
-      <div className="brand">
-        <h1>JobHunt</h1>
+    <div className="app">
+      <div className="topbar">
+        <div className="brand">
+          <h1>JobHunt</h1>
+        </div>
+
+        <div className="toolbar">
+          <button className="btn btnPrimary" onClick={() => refresh()}>Refresh</button>
+          {DEV_TOOLS && (
+            <button className="btn" onClick={() => seedJob().then(refresh).catch((e) => setErr(String(e)))}>
+              Seed
+            </button>
+          )}
+          <ExportDbButton />
+          <button className="btn" onClick={() => setView("prefs")}>Preferences</button>
+          <button className="btn" onClick={() => setView("scrape")}>Scraping</button>
+
+          {/* Auto Apply button — shows pending badge when queue has items */}
+          <button
+            className="btn"
+            onClick={() => setView("apply")}
+            style={{ position: "relative" }}
+          >
+            Auto Apply
+            {queueCount > 0 && (
+              <span
+                style={{
+                  position: "absolute",
+                  top: -6,
+                  right: -6,
+                  fontSize: 10,
+                  fontWeight: 700,
+                  background: "rgba(253,72,37,0.9)",
+                  color: "white",
+                  borderRadius: 999,
+                  padding: "1px 5px",
+                  lineHeight: "16px",
+                  minWidth: 16,
+                  textAlign: "center",
+                  pointerEvents: "none",
+                }}
+              >
+                {queueCount}
+              </span>
+            )}
+          </button>
+        </div>
       </div>
 
-      <div className="toolbar">
-        <button className="btn btnPrimary" onClick={() => refresh()}>Refresh</button>
-        {DEV_TOOLS && (<button className="btn" onClick={() => seedJob().then(refresh).catch((e) => setErr(String(e)))}>
-          Seed
-        </button>
-        )}
-        <ExportDbButton />
-        <button className="btn" onClick={() => setView("prefs")}>Preferences</button>
-        <button className="btn" onClick={() => setView("scrape")}>Scraping</button>
-        <button className="btn" onClick={() => setView("apply")}>Auto Apply</button>
+      <div className="toolbarRow">
+        <div className="tool">
+          <div className="toolLabel">Sort</div>
+          <Select
+            value={sort}
+            onChange={setSort}
+            options={[
+              { value: "score", label: "Score" },
+              { value: "date", label: "Date" },
+              { value: "company", label: "Company" },
+              { value: "title", label: "Title" },
+            ]}
+            width={200}
+          />
+        </div>
+
+        <div className="tool">
+          <div className="toolLabel">Time</div>
+          <Select
+            value={windowKey}
+            onChange={setWindowKey}
+            options={[
+              { value: "24h", label: "Last 24 hours" },
+              { value: "7d", label: "Last week" },
+              { value: "all", label: "All time" },
+            ]}
+            width={200}
+          />
+        </div>
       </div>
-    </div>
 
-    <div className="toolbarRow">
-      <div className="tool">
-        <div className="toolLabel">Sort</div>
-        <Select
-          value={sort}
-          onChange={setSort}
-          options={[
-            { value: "score", label: "Score" },
-            { value: "date", label: "Date" },
-            { value: "company", label: "Company" },
-            { value: "title", label: "Title" },
-          ]}
-          width={200}
-        />
-      </div>
+      {err && (
+        <div className="error">
+          Engine not reachable yet? ({err})
+          <div className="small">Expected: http://127.0.0.1:38471/health</div>
+        </div>
+      )}
 
-      <div className="tool">
-        <div className="toolLabel">Time</div>
-        <Select
-          value={windowKey}
-          onChange={setWindowKey}
-          options={[
-            { value: "24h", label: "Last 24 hours" },
-            { value: "7d", label: "Last week" },
-            { value: "all", label: "All time" },
-          ]}
-          width={200}
-        />
-      </div>
-    </div>
+      <div className="panel">
+        {jobs.length === 0 && <div style={{ padding: 14 }} className="small">No jobs yet.</div>}
 
-    {err && (
-      <div className="error">
-        Engine not reachable yet? ({err})
-        <div className="small">Expected: http://127.0.0.1:38471/health</div>
-      </div>
-    )}
+        {jobs.map((j) => {
+          const logoSrc =
+            j.companyLogoURL && j.companyLogoURL.startsWith("/")
+              ? `http://127.0.0.1:38471${j.companyLogoURL}`
+              : j.companyLogoURL;
 
-    <div className="panel">
-      {jobs.length === 0 && <div style={{ padding: 14 }} className="small">No jobs yet.</div>}
-
-      {jobs.map((j) => {
-        const logoSrc =
-          j.companyLogoURL && j.companyLogoURL.startsWith("/")
-            ? `http://127.0.0.1:38471${j.companyLogoURL}`
-            : j.companyLogoURL;
-
-        return (
-          <div key={j.id} className="listRow">
-            <div className="logo">
-              {logoSrc ? (
-                <img
-                  src={logoSrc}
-                  alt={j.company}
-                  loading="lazy"
-                  referrerPolicy="no-referrer"
-                  crossOrigin="anonymous"
-                  onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
-                />
-              ) : null}
-            </div>
-
-            <div className="jobMain">
-              <p className="jobTitle" title={j.title}>{j.title}</p>
-              <div className="jobMeta">
-                <span className="company">{j.company}</span><span className="dot">·</span>
-                <span>{j.location}</span><span className="dot">·</span>
-                <span>{j.workMode}</span><span className="dot">·</span>
-                <span>{new Date(j.date).toLocaleDateString()}</span><span className="dot">·</span>
-                <span>score {j.score}</span>
+          return (
+            <div key={j.id} className="listRow">
+              <div className="logo">
+                {logoSrc ? (
+                  <img
+                    src={logoSrc}
+                    alt={j.company}
+                    loading="lazy"
+                    referrerPolicy="no-referrer"
+                    crossOrigin="anonymous"
+                    onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
+                  />
+                ) : null}
               </div>
 
-              {(j.tags?.length || j.seenFromSource) && (
-                <div className="tags">
-                  {j.tags?.slice(0, 6).map((t) => (
-                    <span key={t} className="tag">{t}</span>
-                  ))}
-
-                  {j.seenFromSource && (
-                    <span className="tag tagSource">{j.seenFromSource}</span>
-                  )}
+              <div className="jobMain">
+                <p className="jobTitle" title={j.title}>{j.title}</p>
+                <div className="jobMeta">
+                  <span className="company">{j.company}</span><span className="dot">·</span>
+                  <span>{j.location}</span><span className="dot">·</span>
+                  <span>{j.workMode}</span><span className="dot">·</span>
+                  <span>{new Date(j.date).toLocaleDateString()}</span><span className="dot">·</span>
+                  <span>score {j.score}</span>
                 </div>
-              )}
-            </div>
 
-            <div className="actions">
-              <button
-                className="btn btnPrimary"
-                style={{ fontSize: 12, padding: "5px 12px" }}
-                onClick={() => {
-                  addToQueue({ id: j.id, company: j.company, title: j.title, url: j.url });
-                  setView("apply");
-                }}
-              >
-                Apply
-              </button>
-              <a
-                className="link"
-                href={j.url}
-                target="_blank"
-                rel="noreferrer"
-                style={{ fontSize: 12 }}
-              >
-                ↗
-              </a>
-              <button
-                className="iconBtn"
-                onClick={() => {
-                  if (!confirm(`Remove "${j.title}"?`)) return;
-                  deleteJob(j.id).then(refresh).catch((e) => setErr(String(e)));
-                }}
-                title="Remove"
-                aria-label={`Remove ${j.title}`}
-              >
-                ×
-              </button>
+                {(j.tags?.length || j.seenFromSource) && (
+                  <div className="tags">
+                    {j.tags?.slice(0, 6).map((t) => (
+                      <span key={t} className="tag">{t}</span>
+                    ))}
+                    {j.seenFromSource && (
+                      <span className="tag tagSource">{j.seenFromSource}</span>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div className="actions">
+                {/* Apply button — queues the job and opens Auto Apply view */}
+                <button
+                  className="btn btnPrimary"
+                  style={{ fontSize: 12, padding: "5px 14px" }}
+                  onClick={() => {
+                    addToQueue({
+                      id: j.id,
+                      company: j.company,
+                      title: j.title,
+                      url: j.url,
+                    });
+                    setView("apply");
+                  }}
+                >
+                  Apply
+                </button>
+
+                {/* Direct link for quick peek without queuing */}
+                <a
+                  className="link"
+                  href={j.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ fontSize: 13 }}
+                  title="Open job posting"
+                >
+                  ↗
+                </a>
+
+                <button
+                  className="iconBtn"
+                  onClick={() => {
+                    if (!confirm(`Remove "${j.title}"?`)) return;
+                    deleteJob(j.id).then(refresh).catch((e) => setErr(String(e)));
+                  }}
+                  title="Remove"
+                  aria-label={`Remove ${j.title}`}
+                >
+                  ×
+                </button>
+              </div>
             </div>
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
     </div>
-  </div>
-);
+  );
 }

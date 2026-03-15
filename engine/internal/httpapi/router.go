@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -17,9 +18,19 @@ func NewMux(d Deps) *http.ServeMux {
 	mux.HandleFunc("/jobs", methodMux(map[string]http.HandlerFunc{
 		http.MethodGet: jh.List,
 	}))
-	mux.HandleFunc("/jobs/", methodMux(map[string]http.HandlerFunc{
-		http.MethodDelete: jh.DeleteByPath, // expects /jobs/{id}
-	}))
+	// /jobs/ catches both /jobs/{id} (DELETE) and /jobs/{id}/description (GET)
+	mux.HandleFunc("/jobs/", func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		if r.Method == http.MethodGet && strings.HasSuffix(path, "/description") {
+			jh.Description(w, r)
+			return
+		}
+		if r.Method == http.MethodDelete {
+			jh.DeleteByPath(w, r)
+			return
+		}
+		http.NotFound(w, r)
+	})
 	mux.HandleFunc("/seed", methodMux(map[string]http.HandlerFunc{
 		http.MethodPost: jh.Seed,
 	}))
@@ -49,6 +60,18 @@ func NewMux(d Deps) *http.ServeMux {
 	sh := SecretsHandler{CfgVal: d.CfgVal}
 	mux.HandleFunc("/api/secrets/imap", methodMux(map[string]http.HandlerFunc{
 		http.MethodPost: sh.SetIMAPPassword,
+	}))
+	mux.HandleFunc("/api/secrets/claude", methodMux(map[string]http.HandlerFunc{
+		http.MethodPost: sh.SetClaudeAPIKey,
+	}))
+	mux.HandleFunc("/api/secrets/claude/status", methodMux(map[string]http.HandlerFunc{
+		http.MethodGet: sh.GetClaudeKeyStatus,
+	}))
+
+	// Claude proxy — keeps the API key server-side, avoids Tauri CSP block
+	clh := ClaudeHandler{}
+	mux.HandleFunc("/api/claude", methodMux(map[string]http.HandlerFunc{
+		http.MethodPost: clh.ServeProxy,
 	}))
 
 	// Scrape
@@ -91,7 +114,6 @@ func ShutdownHandler(token *string, srv *http.Server) http.HandlerFunc {
 		// Local-only guard (covers typical desktop usage)
 		host, _, err := net.SplitHostPort(r.RemoteAddr)
 		if err != nil {
-			// RemoteAddr can sometimes be just a host; fall back safely
 			host = r.RemoteAddr
 		}
 		if host != "127.0.0.1" && host != "::1" && host != "localhost" {

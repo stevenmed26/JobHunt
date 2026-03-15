@@ -43,13 +43,9 @@ func Migrate(db *sql.DB) error {
 		return err
 	}
 
-	if v >= 1 {
-		return tx.Commit()
-	}
-
-	// ---- Schema v1: tables ----
-
-	if _, err := tx.Exec(`
+	// ---- Schema v1: base tables + indexes ----
+	if v < 1 {
+		if _, err := tx.Exec(`
 CREATE TABLE IF NOT EXISTS jobs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   company TEXT NOT NULL,
@@ -65,10 +61,10 @@ CREATE TABLE IF NOT EXISTS jobs (
   logo_key TEXT NOT NULL DEFAULT ''
 );
 `); err != nil {
-		return err
-	}
+			return err
+		}
 
-	if _, err := tx.Exec(`
+		if _, err := tx.Exec(`
 CREATE TABLE IF NOT EXISTS logos (
   key TEXT PRIMARY KEY,
   content_type TEXT NOT NULL,
@@ -76,57 +72,68 @@ CREATE TABLE IF NOT EXISTS logos (
   fetched_at TEXT NOT NULL
 );
 `); err != nil {
-		return err
-	}
+			return err
+		}
 
-	if _, err := tx.Exec(`
+		if _, err := tx.Exec(`
 CREATE TABLE IF NOT EXISTS company_domains (
   company TEXT PRIMARY KEY,
   domain TEXT NOT NULL,
   fetched_at TEXT NOT NULL
 );
 `); err != nil {
-		return err
-	}
+			return err
+		}
 
-	// ---- Schema v1: indexes ----
-
-	if _, err := tx.Exec(`
+		if _, err := tx.Exec(`
 CREATE INDEX IF NOT EXISTS idx_company_domains_domain
 ON company_domains(domain);
 `); err != nil {
-		return err
-	}
+			return err
+		}
 
-	if _, err := tx.Exec(`
+		if _, err := tx.Exec(`
 CREATE INDEX IF NOT EXISTS idx_jobs_date
 ON jobs(date);
 `); err != nil {
-		return err
-	}
+			return err
+		}
 
-	if _, err := tx.Exec(`
+		if _, err := tx.Exec(`
 CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_source_id
 ON jobs(source_id)
 WHERE source_id != '';
 `); err != nil {
-		return err
-	}
+			return err
+		}
 
-	if !columnExists(tx, "jobs", "source_id") {
-		if _, err := tx.Exec(`ALTER TABLE jobs ADD COLUMN source_id TEXT NOT NULL DEFAULT '';`); err != nil {
+		if !columnExists(tx, "jobs", "source_id") {
+			if _, err := tx.Exec(`ALTER TABLE jobs ADD COLUMN source_id TEXT NOT NULL DEFAULT '';`); err != nil {
+				return err
+			}
+		}
+		if !columnExists(tx, "jobs", "logo_key") {
+			if _, err := tx.Exec(`ALTER TABLE jobs ADD COLUMN logo_key TEXT NOT NULL DEFAULT '';`); err != nil {
+				return err
+			}
+		}
+
+		if _, err := tx.Exec(`PRAGMA user_version = 1;`); err != nil {
 			return err
 		}
 	}
-	if !columnExists(tx, "jobs", "logo_key") {
-		if _, err := tx.Exec(`ALTER TABLE jobs ADD COLUMN logo_key TEXT NOT NULL DEFAULT '';`); err != nil {
+
+	// ---- Schema v2: description column ----
+	if v < 2 {
+		if !columnExists(tx, "jobs", "description") {
+			if _, err := tx.Exec(`ALTER TABLE jobs ADD COLUMN description TEXT NOT NULL DEFAULT '';`); err != nil {
+				return err
+			}
+		}
+
+		if _, err := tx.Exec(`PRAGMA user_version = 2;`); err != nil {
 			return err
 		}
-	}
-
-	// Mark schema v1
-	if _, err := tx.Exec(`PRAGMA user_version = 1;`); err != nil {
-		return err
 	}
 
 	return tx.Commit()
@@ -155,9 +162,6 @@ func ListJobs(ctx context.Context, db *sql.DB, opts ListJobsOpts) ([]Job, error)
 	if opts.Window == "" {
 		opts.Window = "7d"
 	}
-	// if opts.Limit <= 0 || opts.Limit > 2000 {
-	// 	opts.Limit = 500
-	// }
 
 	// whitelist sort columns (prevents SQL injection)
 	sortCol := map[string]string{
@@ -180,7 +184,7 @@ func ListJobs(ctx context.Context, db *sql.DB, opts ListJobsOpts) ([]Job, error)
 		opts.Order = "asc"
 	}
 
-	// time window filter (date is TEXT; this assumes ISO8601/RFC3339 or SQLite-friendly datetime strings)
+	// time window filter
 	where := ""
 	switch opts.Window {
 	case "24h":
@@ -228,14 +232,11 @@ LIMIT ?;
 		); err != nil {
 			return nil, err
 		}
-		// Build URL for UI
 		if j.LogoKey != "" {
 			j.CompanyLogoURL = "/logo/" + j.LogoKey
 		} else {
 			j.CompanyLogoURL = ""
 		}
-		//log.Printf("logo_key=%q companyLogoURL=%q", j.LogoKey, j.CompanyLogoURL)
-		//log.Printf("Logo URL: http://127.0.0.1:38471%s", j.CompanyLogoURL)
 		_ = json.Unmarshal([]byte(tagsJSON), &j.Tags)
 		parsedDate, _ = time.Parse(time.RFC3339, dateStr)
 		j.Date = parsedDate.Format("2006-01-02 15:04:05")
@@ -245,6 +246,19 @@ LIMIT ?;
 		return nil, err
 	}
 	return out, nil
+}
+
+// GetJobDescription returns just the description text for a single job.
+// Returns ("", nil) if the job exists but has no description yet.
+func GetJobDescription(ctx context.Context, db *sql.DB, id int64) (string, error) {
+	var desc string
+	err := db.QueryRowContext(ctx,
+		`SELECT COALESCE(description, '') FROM jobs WHERE id = ? LIMIT 1;`, id,
+	).Scan(&desc)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return desc, err
 }
 
 func SeedJob(ctx context.Context, db *sql.DB) (Job, error) {
