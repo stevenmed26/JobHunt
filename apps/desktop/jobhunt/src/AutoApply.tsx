@@ -9,7 +9,7 @@
 //   4. Add branch:  if (view === "apply") return <AutoApply onBack={() => setView("jobs")} />;
 
 import React, { useEffect, useRef, useState } from "react";
-import { getJobDescription, callLLM, setGroqAPIKey, getGroqKeyStatus } from "./api";
+import { getJobDescription, callLLM, setGroqAPIKey, getGroqKeyStatus, scrapeForm, fillForm, ScrapedField } from "./api";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -54,8 +54,10 @@ export interface ApplicantProfile {
   // Docs (stored as text — user pastes plain-text resume / cover letter)
   resumeText: string;
   coverLetterText: string;
-  resumeFileName: string; // display only
+  resumeFileName: string;     // display only (for the txt/paste version)
   coverLetterFileName: string;
+  resumePdfPath: string;      // absolute path to the actual PDF on disk
+  resumePdfName: string;      // display only
 }
 
 // A single application in the review queue
@@ -67,9 +69,12 @@ export interface ApplicationDraft {
   atsType: "greenhouse" | "lever" | "unknown"; // detected from URL
   atsSlug: string;
   atsJobId: string;
-  status: "pending" | "filling" | "ready" | "submitted" | "error";
-  fields: ApplicationField[];
+  // Status flow: pending → scraping → scraped → filling → ready → submitted
+  status: "pending" | "scraping" | "scraped" | "filling" | "ready" | "submitted" | "error";
+  fields: ApplicationField[];       // profile-seeded fields (for Groq context)
+  scrapedFields: ScrapedField[];    // real form fields from live DOM scrape
   errorMsg?: string;
+  applying?: boolean;               // fill run in progress
 }
 
 export interface ApplicationField {
@@ -97,10 +102,32 @@ function saveProfile(p: ApplicantProfile) {
   localStorage.setItem(PROFILE_KEY, JSON.stringify(p));
 }
 
+function migrateDraft(d: any): ApplicationDraft {
+  // Ensure every draft has all required fields regardless of when it was saved.
+  // New fields added to ApplicationDraft must have a safe default here.
+  return {
+    jobId:         d.jobId         ?? 0,
+    company:       d.company       ?? "",
+    title:         d.title         ?? "",
+    url:           d.url           ?? "",
+    atsType:       d.atsType       ?? "unknown",
+    atsSlug:       d.atsSlug       ?? "",
+    atsJobId:      d.atsJobId      ?? "",
+    status:        d.status        ?? "pending",
+    fields:        Array.isArray(d.fields)        ? d.fields        : [],
+    scrapedFields: Array.isArray(d.scrapedFields) ? d.scrapedFields : [],
+    errorMsg:      d.errorMsg,
+    applying:      d.applying      ?? false,
+  };
+}
+
 function loadQueue(): ApplicationDraft[] {
   try {
     const raw = localStorage.getItem(QUEUE_KEY);
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed.map(migrateDraft);
+    }
   } catch {}
   return [];
 }
@@ -132,6 +159,8 @@ function emptyProfile(): ApplicantProfile {
     coverLetterText: "",
     resumeFileName: "",
     coverLetterFileName: "",
+    resumePdfPath: "",
+    resumePdfName: "",
   };
 }
 
@@ -189,7 +218,7 @@ function profileToFields(profile: ApplicantProfile, atsType: string): Applicatio
 
 // ─── Claude API call ─────────────────────────────────────────────────────────
 
-async function fillWithClaude(
+async function fillWithLLM(
   draft: ApplicationDraft,
   profile: ApplicantProfile,
   jobDescription: string,
@@ -261,6 +290,98 @@ Work authorization: ${profile.workAuth}
     const ai = aiAnswers.find((a) => a.key === field.key);
     if (ai) return { ...field, value: ai.value, source: "ai" };
     return field;
+  });
+}
+
+// Fill scraped form fields using Groq — uses label text + options list
+async function fillScrapedFieldsWithGroq(
+  fields: ScrapedField[],
+  profile: ApplicantProfile,
+  jobDescription: string,
+): Promise<ScrapedField[]> {
+  if (fields.length === 0) return fields;
+
+  const systemPrompt = `You are filling out a job application form.
+Given the applicant profile and each field's label and available options, return the best value for each field.
+
+Return ONLY a JSON array — no markdown, no explanation:
+[{ "selector": "<selector>", "value": "<answer>" }, ...]
+
+Rules:
+- For select fields, value MUST exactly match one of the provided options (use the option label, not the value).
+- For file fields, leave value as empty string "".
+- For cover letter fields, write a tailored 3-paragraph cover letter.
+- For EEO fields (gender, race, veteran, disability), use the applicant's profile values.
+- For unknown custom questions not answerable from the profile, write a brief professional answer.
+- Keep all non-cover-letter answers concise (1 sentence or less).`;
+
+  const fieldSummary = fields
+    .filter(f => f.type !== "file")
+    .map(f => ({
+      selector: f.selector,
+      label:    f.label,
+      type:     f.type,
+      required: f.required,
+      options:  f.options.map(o => o.label),
+    }));
+
+  const userMessage = `APPLICANT PROFILE:
+Name: ${profile.firstName} ${profile.lastName}
+Email: ${profile.email}
+Phone: ${profile.phone}
+Location: ${profile.location}
+Current title: ${profile.currentTitle}
+Years experience: ${profile.yearsExperience}
+Work authorization: ${profile.workAuth}
+Requires sponsorship: ${profile.requiresSponsorship ? "yes" : "no"}
+Desired salary: ${profile.desiredSalary}
+LinkedIn: ${profile.linkedinURL}
+GitHub: ${profile.githubURL}
+Gender: ${profile.gender}
+Race: ${profile.race}
+Veteran status: ${profile.veteranStatus}
+Disability status: ${profile.disabilityStatus}
+
+RESUME:
+${profile.resumeText || "(not provided)"}
+
+COVER LETTER TEMPLATE:
+${profile.coverLetterText || "(not provided)"}
+
+JOB DESCRIPTION:
+${jobDescription || "(not available)"}
+
+FORM FIELDS TO FILL:
+${JSON.stringify(fieldSummary, null, 2)}`;
+
+  const text = await callLLM({
+    system:     systemPrompt,
+    messages:   [{ role: "user", content: userMessage }],
+    max_tokens: 2000,
+  });
+
+  let answers: { selector: string; value: string }[] = [];
+  try {
+    const clean = text.replace(/```json|```/g, "").trim();
+    answers = JSON.parse(clean);
+  } catch {
+    console.warn("[AutoApply] Failed to parse Groq response for scraped fields");
+    return fields;
+  }
+
+  return fields.map((f) => {
+    if (f.type === "file") return f;
+    const answer = answers.find((a) => a.selector === f.selector);
+    if (!answer || !answer.value) return f;
+    // For selects, validate the answer is one of the options
+    if ((f.type === "select" || f.isReactSelect) && f.options.length > 0) {
+      const match = f.options.find(
+        (o) => o.label.toLowerCase() === answer.value.toLowerCase() ||
+               o.value.toLowerCase() === answer.value.toLowerCase()
+      );
+      return { ...f, value: match ? match.label : answer.value };
+    }
+    return { ...f, value: answer.value };
   });
 }
 
@@ -337,94 +458,166 @@ function FieldRow({
   );
 }
 
+// ─── ScrapedFieldRow ─────────────────────────────────────────────────────────
+
+function ScrapedFieldRow({
+  field,
+  idx,
+  onChange,
+}: {
+  field: ScrapedField;
+  idx: number;
+  onChange: (idx: number, val: string) => void;
+}) {
+  const isLong = field.type === "textarea" ||
+    field.label.toLowerCase().includes("cover") ||
+    field.label.toLowerCase().includes("why") ||
+    (field.value?.length ?? 0) > 80;
+
+  const pill = (color: string, label: string) => (
+    <span style={{
+      fontSize: 10, padding: "2px 7px", borderRadius: 999,
+      border: `1px solid ${color}`, color, letterSpacing: "0.03em", flexShrink: 0,
+    }}>{label}</span>
+  );
+
+  return (
+    <div style={{ padding: "10px 14px", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", flex: 1, minWidth: 0 }}>
+          {field.label}
+          {field.required && <span style={{ color: "rgba(253,72,37,0.8)", marginLeft: 3 }}>*</span>}
+        </span>
+        {pill("rgba(255,255,255,0.25)", field.type)}
+        {field.value ? pill("rgba(30,215,96,0.8)", "groq") : pill("rgba(255,255,255,0.2)", "empty")}
+      </div>
+
+      {field.type === "file" ? (
+        <div style={{ fontSize: 12, color: "rgba(255,255,255,0.35)", fontStyle: "italic" }}>
+          Resume file — injected automatically
+        </div>
+      ) : field.type === "select" || field.type === "react-select" ? (
+        <select
+          style={{ width: "100%", borderRadius: 10, padding: "8px 12px",
+            background: "#1c1c1e", border: "1px solid rgba(255,255,255,0.12)",
+            color: "rgba(255,255,255,0.92)", fontSize: 13, colorScheme: "dark" }}
+          value={field.value}
+          onChange={(e) => onChange(idx, e.target.value)}
+        >
+          <option value="">— select —</option>
+          {field.options.map((o) => (
+            <option key={o.value} value={o.label}>{o.label}</option>
+          ))}
+          {/* Allow free-text if Groq picked something not in the list */}
+          {field.value && !field.options.find(o => o.label === field.value) && (
+            <option value={field.value}>{field.value}</option>
+          )}
+        </select>
+      ) : isLong ? (
+        <textarea
+          className="atsTextarea"
+          style={{ minHeight: 90, fontSize: 13 }}
+          value={field.value}
+          onChange={(e) => onChange(idx, e.target.value)}
+          placeholder="—"
+        />
+      ) : (
+        <input
+          className="input"
+          style={{ width: "100%", fontSize: 13 }}
+          value={field.value}
+          onChange={(e) => onChange(idx, e.target.value)}
+          placeholder="—"
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── DraftCard ────────────────────────────────────────────────────────────────
+
 function DraftCard({
   draft,
   profile,
+  onScrape,
   onFill,
   onRemove,
+  onScrapedFieldChange,
   onFieldChange,
+  onApply,
 }: {
   draft: ApplicationDraft;
   profile: ApplicantProfile;
+  onScrape: () => void;
   onFill: () => void;
   onRemove: () => void;
+  onScrapedFieldChange: (idx: number, val: string) => void;
   onFieldChange: (key: string, val: string) => void;
+  onApply: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
 
   const atsBadge: Record<string, string> = {
     greenhouse: "#1D9E75",
-    lever: "#0A84FF",
-    unknown: "rgba(255,255,255,0.3)",
+    lever:      "#0A84FF",
+    unknown:    "rgba(255,255,255,0.3)",
   };
 
   const statusLabel: Record<ApplicationDraft["status"], string> = {
-    pending: "Pending",
-    filling: "Filling…",
-    ready: "Ready",
+    pending:   "Pending",
+    scraping:  "Scraping…",
+    scraped:   "Review fields",
+    filling:   "Filling…",
+    ready:     "Ready",
     submitted: "Submitted",
-    error: "Error",
+    error:     "Error",
   };
   const statusColor: Record<ApplicationDraft["status"], string> = {
-    pending: "rgba(255,255,255,0.4)",
-    filling: "rgba(253,200,0,0.9)",
-    ready: "rgba(30,215,96,0.9)",
+    pending:   "rgba(255,255,255,0.4)",
+    scraping:  "rgba(253,200,0,0.9)",
+    scraped:   "rgba(10,132,255,0.9)",
+    filling:   "rgba(253,200,0,0.9)",
+    ready:     "rgba(30,215,96,0.9)",
     submitted: "rgba(30,215,96,0.5)",
-    error: "rgba(255,69,58,0.9)",
+    error:     "rgba(255,69,58,0.9)",
   };
 
-  const filledCount = draft.fields.filter((f) => f.value.trim() !== "").length;
-  const totalCount = draft.fields.length;
+  // Progress: use scraped fields if available, else profile fields
+  const displayFields   = draft.scrapedFields.length > 0 ? draft.scrapedFields : null;
+  const filledCount     = displayFields
+    ? displayFields.filter(f => f.type !== "file" && f.value?.trim()).length
+    : draft.fields.filter(f => f.value.trim()).length;
+  const totalCount      = displayFields
+    ? displayFields.filter(f => f.type !== "file").length
+    : draft.fields.length;
   const pct = totalCount > 0 ? Math.round((filledCount / totalCount) * 100) : 0;
 
+  const canFill    = draft.status === "scraped" || draft.status === "ready" || draft.status === "error";
+  const canApply   = draft.status === "scraped" || draft.status === "ready";
+  const isWorking  = draft.status === "scraping" || draft.status === "filling" || draft.applying;
+
   return (
-    <div
-      style={{
-        borderBottom: "1px solid rgba(255,255,255,0.07)",
-        background: expanded ? "rgba(255,255,255,0.025)" : "transparent",
-        transition: "background 150ms ease",
-      }}
-    >
-      {/* Header row */}
+    <div style={{
+      borderBottom: "1px solid rgba(255,255,255,0.07)",
+      background: expanded ? "rgba(255,255,255,0.025)" : "transparent",
+      transition: "background 150ms ease",
+    }}>
+      {/* ── Header row ── */}
       <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 10,
-          padding: "12px 14px",
-          cursor: "pointer",
-        }}
-        onClick={() => setExpanded((x) => !x)}
+        style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", cursor: "pointer" }}
+        onClick={() => setExpanded(x => !x)}
       >
-        {/* ATS badge */}
-        <span
-          style={{
-            fontSize: 10,
-            padding: "2px 7px",
-            borderRadius: 999,
-            background: atsBadge[draft.atsType],
-            color: "white",
-            fontWeight: 600,
-            letterSpacing: "0.04em",
-            textTransform: "uppercase",
-            flexShrink: 0,
-          }}
-        >
+        <span style={{
+          fontSize: 10, padding: "2px 7px", borderRadius: 999,
+          background: atsBadge[draft.atsType], color: "white",
+          fontWeight: 600, letterSpacing: "0.04em", textTransform: "uppercase", flexShrink: 0,
+        }}>
           {draft.atsType}
         </span>
 
-        {/* Title / company */}
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div
-            style={{
-              fontSize: 13,
-              fontWeight: 600,
-              letterSpacing: "-0.01em",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
+          <div style={{ fontSize: 13, fontWeight: 600, letterSpacing: "-0.01em",
+            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {draft.title}
           </div>
           <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>
@@ -434,122 +627,138 @@ function DraftCard({
 
         {/* Progress bar */}
         <div style={{ width: 60, flexShrink: 0 }}>
-          <div
-            style={{
-              height: 3,
-              borderRadius: 999,
-              background: "rgba(255,255,255,0.1)",
-              overflow: "hidden",
-            }}
-          >
-            <div
-              style={{
-                height: "100%",
-                width: `${pct}%`,
-                background:
-                  pct === 100 ? "rgba(30,215,96,0.8)" : "rgba(253,72,37,0.7)",
-                borderRadius: 999,
-                transition: "width 300ms ease",
-              }}
-            />
+          <div style={{ height: 3, borderRadius: 999, background: "rgba(255,255,255,0.1)", overflow: "hidden" }}>
+            <div style={{
+              height: "100%", width: `${pct}%`,
+              background: pct === 100 ? "rgba(30,215,96,0.8)" : "rgba(253,72,37,0.7)",
+              borderRadius: 999, transition: "width 300ms ease",
+            }} />
           </div>
           <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", marginTop: 3, textAlign: "right" }}>
             {filledCount}/{totalCount}
           </div>
         </div>
 
-        {/* Status */}
-        <span
-          style={{
-            fontSize: 11,
-            color: statusColor[draft.status],
-            minWidth: 56,
-            textAlign: "right",
-            flexShrink: 0,
-          }}
-        >
+        <span style={{ fontSize: 11, color: statusColor[draft.status], minWidth: 80, textAlign: "right", flexShrink: 0 }}>
           {statusLabel[draft.status]}
         </span>
 
-        {/* Chevron */}
-        <span
-          style={{
-            fontSize: 11,
-            color: "rgba(255,255,255,0.3)",
-            transform: expanded ? "rotate(90deg)" : "rotate(0deg)",
-            transition: "transform 150ms ease",
-            flexShrink: 0,
-          }}
-        >
-          ›
-        </span>
+        <span style={{
+          fontSize: 11, color: "rgba(255,255,255,0.3)",
+          transform: expanded ? "rotate(90deg)" : "rotate(0deg)",
+          transition: "transform 150ms ease", flexShrink: 0,
+        }}>›</span>
       </div>
 
-      {/* Expanded body */}
+      {/* ── Expanded body ── */}
       {expanded && (
         <div>
-          {/* Error banner */}
+          {/* Error */}
           {draft.status === "error" && draft.errorMsg && (
-            <div className="atsWarning" style={{ margin: "0 14px 10px" }}>
-              {draft.errorMsg}
-            </div>
+            <div className="atsWarning" style={{ margin: "0 14px 10px" }}>{draft.errorMsg}</div>
           )}
 
-          {/* Fields */}
-          <div
-            style={{
-              margin: "0 14px",
-              border: "1px solid rgba(255,255,255,0.08)",
-              borderRadius: 14,
-              overflow: "hidden",
-              background: "rgba(255,255,255,0.03)",
-            }}
-          >
-            {draft.fields.length === 0 && (
-              <div style={{ padding: 14, fontSize: 12, color: "rgba(255,255,255,0.4)" }}>
-                Click "Fill with Claude" to generate application fields.
+          {/* Step indicator */}
+          <div style={{ display: "flex", gap: 0, margin: "0 14px 12px", borderRadius: 10, overflow: "hidden", border: "1px solid rgba(255,255,255,0.08)" }}>
+            {[
+              { label: "1  Scrape form",    done: ["scraped","filling","ready","submitted"].includes(draft.status), active: draft.status === "scraping" },
+              { label: "2  Review & fill",  done: ["ready","submitted"].includes(draft.status),                    active: draft.status === "scraped" || draft.status === "filling" },
+              { label: "3  Open & submit",  done: draft.status === "submitted",                                    active: draft.applying ?? false },
+            ].map((step, i) => (
+              <div key={i} style={{
+                flex: 1, padding: "6px 10px", fontSize: 11, textAlign: "center",
+                background: step.done ? "rgba(30,215,96,0.12)" : step.active ? "rgba(10,132,255,0.12)" : "rgba(255,255,255,0.02)",
+                color: step.done ? "rgba(30,215,96,0.9)" : step.active ? "rgba(10,132,255,0.9)" : "rgba(255,255,255,0.3)",
+                borderRight: i < 2 ? "1px solid rgba(255,255,255,0.08)" : "none",
+              }}>
+                {step.done ? "✓ " : ""}{step.label}
               </div>
-            )}
-            {draft.fields.map((f) => (
-              <FieldRow
-                key={f.key}
-                field={f}
-                onChange={(val) => onFieldChange(f.key, val)}
-              />
             ))}
           </div>
 
-          {/* Action row */}
-          <div
-            style={{
-              display: "flex",
-              gap: 8,
-              padding: "10px 14px 14px",
-              alignItems: "center",
-            }}
-          >
+          {/* Fields panel */}
+          <div style={{ margin: "0 14px", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 14, overflow: "hidden", background: "rgba(255,255,255,0.03)" }}>
+            {draft.scrapedFields.length > 0 ? (
+              <>
+                <div style={{ padding: "8px 14px", fontSize: 11, color: "rgba(255,255,255,0.4)", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+                  {draft.scrapedFields.length} fields scraped from the live form — edit any value before submitting
+                </div>
+                {draft.scrapedFields.map((f, i) => (
+                  <ScrapedFieldRow
+                    key={i}
+                    field={f}
+                    idx={i}
+                    onChange={onScrapedFieldChange}
+                  />
+                ))}
+              </>
+            ) : draft.status === "pending" || draft.status === "error" ? (
+              <div style={{ padding: 16, fontSize: 12, color: "rgba(255,255,255,0.4)", lineHeight: 1.6 }}>
+                <strong style={{ color: "rgba(255,255,255,0.7)", display: "block", marginBottom: 4 }}>Step 1: Scrape the form</strong>
+                Click <strong>Scrape Form</strong> — the filler opens the job URL in a headless browser,
+                reads every field (labels, dropdowns, options), then Groq fills them using your profile.
+                You review before anything is submitted.
+              </div>
+            ) : draft.status === "scraping" ? (
+              <div style={{ padding: 16, fontSize: 12, color: "rgba(253,200,0,0.8)" }}>
+                Opening form in headless browser and reading all fields…
+              </div>
+            ) : null}
+          </div>
+
+          {/* ── Action row ── */}
+          <div style={{ display: "flex", gap: 8, padding: "10px 14px 14px", alignItems: "center", flexWrap: "wrap" }}>
+
+            {/* Step 1: Scrape */}
             <button
               className="btn btnPrimary"
               style={{ fontSize: 12, padding: "7px 14px" }}
-              onClick={(e) => {
-                e.stopPropagation();
-                onFill();
-              }}
-              disabled={draft.status === "filling"}
+              onClick={(e) => { e.stopPropagation(); onScrape(); }}
+              disabled={isWorking}
             >
-              {draft.status === "filling"
-                ? "Filling…"
-                : draft.fields.length === 0
-                ? "Fill with Claude"
-                : "Re-fill with Claude"}
+              {draft.status === "scraping" ? "Scraping…" :
+               draft.scrapedFields.length > 0 ? "Re-scrape form" : "Scrape form"}
             </button>
+
+            {/* Step 2: Re-fill with Groq after scrape */}
+            {draft.scrapedFields.length > 0 && (
+              <button
+                className="btn"
+                style={{ fontSize: 12, padding: "7px 14px",
+                  background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)" }}
+                onClick={(e) => { e.stopPropagation(); onFill(); }}
+                disabled={isWorking}
+              >
+                {draft.status === "filling" ? "Filling…" : "Re-fill with Groq"}
+              </button>
+            )}
+
+            {/* Step 3: Open & Fill in browser */}
+            {canApply && (
+              <button
+                className="btn"
+                style={{
+                  fontSize: 12, padding: "7px 14px",
+                  background: draft.applying ? "rgba(255,255,255,0.06)" :
+                    draft.status === "submitted" ? "rgba(30,215,96,0.15)" : "rgba(30,215,96,0.22)",
+                  border: `1px solid ${draft.status === "submitted" ? "rgba(30,215,96,0.3)" : "rgba(30,215,96,0.5)"}`,
+                  color: draft.status === "submitted" ? "rgba(30,215,96,0.6)" : "rgba(30,215,96,1)",
+                  cursor: draft.applying || draft.status === "submitted" ? "default" : "pointer",
+                }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (!draft.applying && draft.status !== "submitted") onApply();
+                }}
+                disabled={draft.applying || draft.status === "submitted"}
+              >
+                {draft.applying ? "Launching…" : draft.status === "submitted" ? "✓ Launched" : "Open & Fill Browser"}
+              </button>
+            )}
 
             <a
               className="btn"
               style={{ fontSize: 12, padding: "7px 14px", textDecoration: "none" }}
-              href={draft.url}
-              target="_blank"
-              rel="noreferrer"
+              href={draft.url} target="_blank" rel="noreferrer"
               onClick={(e) => e.stopPropagation()}
             >
               Open job ↗
@@ -560,10 +769,7 @@ function DraftCard({
             <button
               className="btn"
               style={{ fontSize: 12, padding: "7px 10px", opacity: 0.5 }}
-              onClick={(e) => {
-                e.stopPropagation();
-                onRemove();
-              }}
+              onClick={(e) => { e.stopPropagation(); onRemove(); }}
             >
               Remove
             </button>
@@ -597,8 +803,9 @@ export default function AutoApply({ onBack }: { onBack: () => void }) {
   const [apiKeyInput, setApiKeyInput] = useState("");
   const [apiKeyError, setApiKeyError] = useState("");
 
-  const resumeInputRef = useRef<HTMLInputElement>(null);
-  const coverInputRef = useRef<HTMLInputElement>(null);
+  const resumeInputRef    = useRef<HTMLInputElement>(null);
+  const resumePdfInputRef = useRef<HTMLInputElement>(null);
+  const coverInputRef     = useRef<HTMLInputElement>(null);
 
   // Check on mount whether a key is already stored
   useEffect(() => {
@@ -629,51 +836,29 @@ export default function AutoApply({ onBack }: { onBack: () => void }) {
   }
 
 
-  async function fillDraft(jobId: number) {
-    // Capture current draft synchronously from the functional updater to avoid
-    // stale-closure reads. We extract it inside setQueue so it reflects the
-    // latest state even if the job was just added this render cycle.
+  // Phase 1: scrape the live form to discover all real fields
+  async function scrapeDraft(jobId: number) {
     let currentDraft: ApplicationDraft | undefined;
     setQueue((q) => {
       currentDraft = q.find((d) => d.jobId === jobId);
-      return q.map((d) => (d.jobId === jobId ? { ...d, status: "filling" } : d));
+      return q.map((d) => d.jobId === jobId ? { ...d, status: "scraping", errorMsg: undefined } : d);
     });
-
-    // Give React one tick to flush before we proceed
     await new Promise((r) => setTimeout(r, 0));
-
     if (!currentDraft) return;
     const draft = currentDraft;
 
     try {
-      // Ensure profile fields are seeded
-      const withProfile: ApplicationDraft = {
-        ...draft,
-        fields:
-          draft.fields.length === 0
-            ? profileToFields(profile, draft.atsType)
-            : draft.fields,
-      };
+      // Scrape real fields from the live form
+      const scraped = await scrapeForm(draft.jobId, draft.url, draft.atsType);
 
-      // Add common open-ended fields if not already present
-      const openFields: ApplicationField[] = [
-        { key: "cover_letter", label: "Cover letter", value: "", source: "ai", required: false },
-        { key: "why_this_company", label: "Why do you want to work here?", value: "", source: "ai", required: false },
-        { key: "how_did_you_hear", label: "How did you hear about this role?", value: "", source: "ai", required: false },
-      ];
-      for (const of_ of openFields) {
-        if (!withProfile.fields.some((f) => f.key === of_.key)) {
-          withProfile.fields.push(of_);
-        }
-      }
-
+      // Use Groq to fill in values based on scraped labels + profile
       const jobDesc = await fetchJobDescription(jobId);
-      const filledFields = await fillWithClaude(withProfile, profile, jobDesc);
+      const filledScraped = await fillScrapedFieldsWithGroq(scraped, profile, jobDesc);
 
       setQueue((q) =>
         q.map((d) =>
           d.jobId === jobId
-            ? { ...d, status: "ready", fields: filledFields, errorMsg: undefined }
+            ? { ...d, status: "scraped", scrapedFields: filledScraped, errorMsg: undefined }
             : d,
         ),
       );
@@ -688,8 +873,96 @@ export default function AutoApply({ onBack }: { onBack: () => void }) {
     }
   }
 
+  // Legacy: fill profile-seeded fields with Groq (used as context in scrape mode too)
+  async function fillDraft(jobId: number) {
+    let currentDraft: ApplicationDraft | undefined;
+    setQueue((q) => {
+      currentDraft = q.find((d) => d.jobId === jobId);
+      return q.map((d) => (d.jobId === jobId ? { ...d, status: "filling" } : d));
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    if (!currentDraft) return;
+    const draft = currentDraft;
+    try {
+      const withProfile: ApplicationDraft = {
+        ...draft,
+        fields: draft.fields.length === 0 ? profileToFields(profile, draft.atsType) : draft.fields,
+        scrapedFields: draft.scrapedFields,
+      };
+      const openFields: ApplicationField[] = [
+        { key: "cover_letter", label: "Cover letter", value: "", source: "ai", required: false },
+        { key: "why_this_company", label: "Why do you want to work here?", value: "", source: "ai", required: false },
+        { key: "how_did_you_hear", label: "How did you hear about this role?", value: "", source: "ai", required: false },
+      ];
+      for (const of_ of openFields) {
+        if (!withProfile.fields.some((f) => f.key === of_.key)) {
+          withProfile.fields.push(of_);
+        }
+      }
+      const jobDesc = await fetchJobDescription(jobId);
+      const filledFields = await fillWithLLM(withProfile, profile, jobDesc);
+      setQueue((q) =>
+        q.map((d) =>
+          d.jobId === jobId
+            ? { ...d, status: "ready", fields: filledFields, errorMsg: undefined }
+            : d,
+        ),
+      );
+    } catch (err: any) {
+      setQueue((q) =>
+        q.map((d) =>
+          d.jobId === jobId ? { ...d, status: "error", errorMsg: String(err?.message ?? err) } : d,
+        ),
+      );
+    }
+  }
+
   function removeDraft(jobId: number) {
     setQueue((q) => q.filter((d) => d.jobId !== jobId));
+  }
+
+  async function applyDraft(jobId: number) {
+    let currentDraft: ApplicationDraft | undefined;
+    setQueue((q) => {
+      currentDraft = q.find((d) => d.jobId === jobId);
+      return q.map((d) => d.jobId === jobId ? { ...d, applying: true, errorMsg: undefined } : d);
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    if (!currentDraft) return;
+    const draft = currentDraft;
+
+    // Use scraped fields if available (preferred), fall back to profile fields
+    const fieldsToFill = draft.scrapedFields.length > 0
+      ? draft.scrapedFields
+      : draft.fields.map((f) => ({
+          selector: "",
+          label:    f.label,
+          type:     "text",
+          required: f.required,
+          options:  [],
+          value:    f.value,
+        }));
+
+    try {
+      await fillForm({
+        jobId:         draft.jobId,
+        url:           draft.url,
+        resumePdfPath: profile.resumePdfPath,
+        resumeText:    profile.resumePdfPath ? "" : profile.resumeText,
+        fields:        fieldsToFill,
+      });
+      setQueue((q) =>
+        q.map((d) => d.jobId === jobId ? { ...d, applying: false, status: "submitted" } : d)
+      );
+    } catch (err: any) {
+      setQueue((q) =>
+        q.map((d) =>
+          d.jobId === jobId
+            ? { ...d, applying: false, status: "error", errorMsg: String(err?.message ?? err) }
+            : d
+        )
+      );
+    }
   }
 
   function updateField(jobId: number, fieldKey: string, value: string) {
@@ -707,12 +980,27 @@ export default function AutoApply({ onBack }: { onBack: () => void }) {
     );
   }
 
+  function updateScrapedField(jobId: number, idx: number, value: string) {
+    setQueue((q) =>
+      q.map((d) =>
+        d.jobId === jobId
+          ? {
+              ...d,
+              scrapedFields: d.scrapedFields.map((f, i) =>
+                i === idx ? { ...f, value } : f,
+              ),
+            }
+          : d,
+      ),
+    );
+  }
+
   // ── Profile tab ────────────────────────────────────────────────────────────
 
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
-  const pendingBadge = queue.filter((d) => d.status === "pending").length;
+  const pendingBadge = queue.filter((d) => d.scrapedFields.length === 0).length;
 
   return (
     <div className="app">
@@ -793,6 +1081,7 @@ export default function AutoApply({ onBack }: { onBack: () => void }) {
           profile={profile}
           updateProfile={updateProfile}
           resumeInputRef={resumeInputRef}
+          resumePdfInputRef={resumePdfInputRef}
           coverInputRef={coverInputRef}
           handleFileUpload={handleFileUpload}
           apiKeySet={apiKeySet}
@@ -818,9 +1107,12 @@ export default function AutoApply({ onBack }: { onBack: () => void }) {
         <QueueTab
           queue={queue}
           profile={profile}
+          scrapeDraft={scrapeDraft}
           fillDraft={fillDraft}
           removeDraft={removeDraft}
           updateField={updateField}
+          updateScrapedField={updateScrapedField}
+          applyDraft={applyDraft}
         />
       )}
     </div>
@@ -903,6 +1195,7 @@ function ProfileTab({
   profile,
   updateProfile,
   resumeInputRef,
+  resumePdfInputRef,
   coverInputRef,
   handleFileUpload,
   apiKeySet,
@@ -915,6 +1208,7 @@ function ProfileTab({
   profile: ApplicantProfile;
   updateProfile: (key: keyof ApplicantProfile, value: any) => void;
   resumeInputRef: React.RefObject<HTMLInputElement | null>;
+  resumePdfInputRef: React.RefObject<HTMLInputElement | null>;
   coverInputRef: React.RefObject<HTMLInputElement | null>;
   handleFileUpload: (
     file: File,
@@ -1051,13 +1345,60 @@ function ProfileTab({
       <div className="sectionHead">Documents</div>
       <div style={{ padding: "14px 14px", display: "flex", flexDirection: "column", gap: 16 }}>
         <p className="help" style={{ marginTop: 0 }}>
-          Paste or upload plain-text versions. Claude uses these as context when filling unknown fields and customizing cover letters.
+          Upload your formatted PDF resume for form uploads, plus a plain-text version for Groq to read when filling fields.
         </p>
 
-        {/* Resume */}
+        {/* Resume — PDF for uploading + txt/paste for Groq context */}
         <div>
+          {/* PDF upload row */}
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-            <span style={{ fontSize: 13, fontWeight: 600 }}>Resume</span>
+            <span style={{ fontSize: 13, fontWeight: 600 }}>Resume PDF</span>
+            {profile.resumePdfName ? (
+              <span style={{ fontSize: 11, color: "rgba(30,215,96,0.8)", padding: "2px 8px", borderRadius: 999, border: "1px solid rgba(30,215,96,0.3)" }}>
+                {profile.resumePdfName}
+              </span>
+            ) : (
+              <span style={{ fontSize: 11, color: "rgba(255,255,255,0.35)" }}>
+                No PDF — will upload plain text instead
+              </span>
+            )}
+            <input
+              ref={resumePdfInputRef}
+              type="file"
+              accept=".pdf,.doc,.docx"
+              style={{ display: "none" }}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) {
+                  // Tauri exposes the real filesystem path on the File object
+                  // via a non-standard property. We store it for the engine to use.
+                  const filePath: string = (f as any).path || (f as any)._path || f.name;
+                  updateProfile("resumePdfPath", filePath);
+                  updateProfile("resumePdfName", f.name);
+                }
+              }}
+            />
+            <button
+              className="btn miniBtn"
+              style={{ marginLeft: "auto" }}
+              onClick={() => resumePdfInputRef.current?.click()}
+            >
+              Upload PDF
+            </button>
+            {profile.resumePdfName && (
+              <button
+                className="btn miniBtn"
+                style={{ opacity: 0.5 }}
+                onClick={() => { updateProfile("resumePdfPath", ""); updateProfile("resumePdfName", ""); }}
+              >
+                Remove
+              </button>
+            )}
+          </div>
+
+          {/* Plain text for Groq context */}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+            <span style={{ fontSize: 12, color: "rgba(255,255,255,0.55)" }}>Plain text (for AI context)</span>
             {profile.resumeFileName && (
               <span style={{ fontSize: 11, color: "rgba(30,215,96,0.8)", padding: "2px 8px", borderRadius: 999, border: "1px solid rgba(30,215,96,0.3)" }}>
                 {profile.resumeFileName}
@@ -1083,9 +1424,9 @@ function ProfileTab({
           </div>
           <textarea
             className="atsTextarea"
-            style={{ minHeight: 160 }}
+            style={{ minHeight: 140 }}
             value={profile.resumeText}
-            placeholder="Paste your resume as plain text here. This is what Claude reads — not a PDF."
+            placeholder="Paste your resume as plain text — Groq reads this to fill out fields and write cover letters."
             onChange={(e) => updateProfile("resumeText", e.target.value)}
           />
         </div>
@@ -1183,17 +1524,24 @@ function ProfileTab({
 function QueueTab({
   queue,
   profile,
+  scrapeDraft,
   fillDraft,
   removeDraft,
   updateField,
+  updateScrapedField,
+  applyDraft,
 }: {
   queue: ApplicationDraft[];
   profile: ApplicantProfile;
+  scrapeDraft: (jobId: number) => void;
   fillDraft: (jobId: number) => void;
   removeDraft: (jobId: number) => void;
   updateField: (jobId: number, fieldKey: string, value: string) => void;
+  updateScrapedField: (jobId: number, idx: number, value: string) => void;
+  applyDraft: (jobId: number) => void;
 }) {
   const pendingCount = queue.filter((d) => d.status === "pending" || d.status === "error").length;
+  const unscrapeCount = queue.filter((d) => d.scrapedFields.length === 0 && d.status !== "scraping").length;
 
   return (
     <div>
@@ -1213,26 +1561,26 @@ function QueueTab({
         <span style={{ fontSize: 13, color: "rgba(255,255,255,0.6)" }}>
           {queue.length} job{queue.length !== 1 ? "s" : ""} queued
         </span>
-        {pendingCount > 0 && (
+        {unscrapeCount > 0 && (
           <span style={{ fontSize: 12, color: "rgba(253,72,37,0.85)" }}>
-            · {pendingCount} need filling
+            · {unscrapeCount} not yet scraped
           </span>
         )}
         <div style={{ flex: 1 }} />
-        {pendingCount > 0 && (
+        {unscrapeCount > 0 && (
           <button
             className="btn btnPrimary"
             style={{ fontSize: 12, padding: "6px 14px" }}
             onClick={async () => {
-              const toFill = queue
-                .filter((d) => d.status === "pending" || d.status === "error")
+              const toScrape = queue
+                .filter((d) => d.scrapedFields.length === 0 && d.status !== "scraping")
                 .map((d) => d.jobId);
-              for (const id of toFill) {
-                await fillDraft(id);
+              for (const id of toScrape) {
+                await scrapeDraft(id);
               }
             }}
           >
-            Fill all with Claude
+            Scrape all forms
           </button>
         )}
       </div>
@@ -1274,9 +1622,12 @@ function QueueTab({
             key={draft.jobId}
             draft={draft}
             profile={profile}
+            onScrape={() => scrapeDraft(draft.jobId)}
             onFill={() => fillDraft(draft.jobId)}
             onRemove={() => removeDraft(draft.jobId)}
+            onScrapedFieldChange={(idx, val) => updateScrapedField(draft.jobId, idx, val)}
             onFieldChange={(key, val) => updateField(draft.jobId, key, val)}
+            onApply={() => applyDraft(draft.jobId)}
           />
         ))}
       </div>
@@ -1303,6 +1654,7 @@ export function useAutoApplyQueue() {
       atsJobId,
       status: "pending",
       fields: profileToFields(profile, atsType),
+      scrapedFields: [],
     };
 
     const next = [draft, ...queue];

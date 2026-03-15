@@ -188,3 +188,54 @@ export async function getGroqKeyStatus(): Promise<boolean> {
   const data = await res.json();
   return data.has_key === true;
 }
+
+// ─── Apply — two-phase scrape + fill ─────────────────────────────────────────
+
+// A field scraped from the real ATS form by filler.js --scrape
+export interface ScrapedField {
+  selector: string;       // exact CSS selector from the live DOM
+  label: string;          // human-readable label text
+  type: string;           // text|email|tel|select|textarea|file|react-select
+  required: boolean;
+  options: { value: string; label: string }[];  // for select/react-select
+  value: string;          // filled in by Groq, editable by user
+  isFile?: boolean;
+  isReactSelect?: boolean;
+}
+
+// Phase 1: scrape the form fields from the live URL
+export async function scrapeForm(jobId: number, url: string, atsType: string): Promise<ScrapedField[]> {
+  const res = await fetch(`${ENGINE_BASE}/api/apply/scrape`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jobId, url, atsType }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `Scrape error: ${res.status}`);
+  }
+  const data = await res.json();
+  return data.fields as ScrapedField[];
+}
+
+// Phase 2: fill the form using exact selectors + reviewed values
+export interface FillRequest {
+  jobId: number;
+  url: string;
+  resumePdfPath?: string;
+  resumeText?: string;
+  fields: ScrapedField[];
+}
+
+export async function fillForm(req: FillRequest): Promise<{ ok: boolean; pid?: number }> {
+  const res = await fetch(`${ENGINE_BASE}/api/apply/fill`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `Fill error: ${res.status}`);
+  }
+  return res.json();
+}

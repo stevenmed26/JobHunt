@@ -152,6 +152,8 @@ func run() error {
 		DeleteJob: httpapi.DeleteJob,
 
 		RunPollOnce: poll.PollOnce,
+
+		DataDir: dataDir,
 	})
 
 	// Bind to a predictable local port

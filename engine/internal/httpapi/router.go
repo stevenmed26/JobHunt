@@ -74,6 +74,15 @@ func NewMux(d Deps) *http.ServeMux {
 		http.MethodPost: llmh.ServeProxy,
 	}))
 
+	// Apply — two-phase: scrape form fields, then fill with exact selectors
+	ah := ApplyHandler{DB: d.DB, DataDir: d.DataDir}
+	mux.HandleFunc("/api/apply/scrape", methodMux(map[string]http.HandlerFunc{
+		http.MethodPost: ah.Scrape,
+	}))
+	mux.HandleFunc("/api/apply/fill", methodMux(map[string]http.HandlerFunc{
+		http.MethodPost: ah.Fill,
+	}))
+
 	// Scrape
 	sch := ScrapeHandler{
 		DB:           d.DB,
