@@ -20,8 +20,6 @@ func (v *Validation) warnf(format string, args ...any) {
 }
 func (v Validation) OK() bool { return len(v.Errors) == 0 }
 
-// NormalizeAndValidate returns a normalized copy + validation messages.
-// Keep normalization conservative (trim, dedupe, consistent casing) so you don't surprise users.
 func NormalizeAndValidate(cfg Config) (Config, Validation) {
 	out := cfg
 	var res Validation

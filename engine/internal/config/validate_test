@@ -1,0 +1,244 @@
+package config
+
+import (
+	"strings"
+	"testing"
+)
+
+// ─── helpers ─────────────────────────────────────────────────────────────────
+
+// validBase returns a config that passes all validation checks.
+func validBase() Config {
+	var c Config
+	c.Polling.EmailSeconds = 60
+	c.Polling.FastLaneSeconds = 60
+	c.Polling.NormalLaneSeconds = 300
+	c.Filters.RemoteOK = true
+	c.Scoring.TitleRules = []Rule{{Tag: "eng", Weight: 10, Any: []string{"engineer"}}}
+	return c
+}
+
+func hasError(v Validation, substr string) bool {
+	for _, e := range v.Errors {
+		if strings.Contains(e, substr) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasWarning(v Validation, substr string) bool {
+	for _, w := range v.Warnings {
+		if strings.Contains(w, substr) {
+			return true
+		}
+	}
+	return false
+}
+
+// ─── Polling validation ───────────────────────────────────────────────────────
+
+func TestValidate_Polling(t *testing.T) {
+	t.Run("zero email_seconds is an error", func(t *testing.T) {
+		c := validBase()
+		c.Polling.EmailSeconds = 0
+		_, v := NormalizeAndValidate(c)
+		if !hasError(v, "email_seconds") {
+			t.Error("expected error for email_seconds=0")
+		}
+	})
+
+	t.Run("very low email_seconds is a warning", func(t *testing.T) {
+		c := validBase()
+		c.Polling.EmailSeconds = 5
+		_, v := NormalizeAndValidate(c)
+		if !hasWarning(v, "email_seconds") {
+			t.Error("expected warning for email_seconds=5")
+		}
+	})
+
+	t.Run("zero fast_lane_seconds is an error", func(t *testing.T) {
+		c := validBase()
+		c.Polling.FastLaneSeconds = 0
+		_, v := NormalizeAndValidate(c)
+		if !hasError(v, "fast_lane_seconds") {
+			t.Error("expected error for fast_lane_seconds=0")
+		}
+	})
+}
+
+// ─── Filter validation ────────────────────────────────────────────────────────
+
+func TestValidate_Filters(t *testing.T) {
+	t.Run("no remote and no allow list warns", func(t *testing.T) {
+		c := validBase()
+		c.Filters.RemoteOK = false
+		c.Filters.LocationsAllow = nil
+		_, v := NormalizeAndValidate(c)
+		if !hasWarning(v, "locations_allow") {
+			t.Error("expected warning about empty locations_allow when remote_ok=false")
+		}
+	})
+
+	t.Run("location in both allow and block warns", func(t *testing.T) {
+		c := validBase()
+		c.Filters.LocationsAllow = []string{"Texas"}
+		c.Filters.LocationsBlock = []string{"texas"} // same after lower
+		_, v := NormalizeAndValidate(c)
+		if !hasWarning(v, "allow and block") {
+			t.Error("expected warning for location in both allow and block")
+		}
+	})
+}
+
+// ─── Normalization ────────────────────────────────────────────────────────────
+
+func TestNormalize_DeduplicatesCompanies(t *testing.T) {
+	c := validBase()
+	c.Sources.Greenhouse.Enabled = true
+	c.Sources.Greenhouse.Companies = []Company{
+		{Slug: "stripe", Name: "Stripe"},
+		{Slug: "stripe", Name: "Stripe"}, // exact duplicate
+		{Slug: "STRIPE", Name: "stripe"}, // different slug casing — distinct after lower
+	}
+	out, _ := NormalizeAndValidate(c)
+	// "stripe" and "STRIPE" → both become "stripe" after lowercase → deduped to 1
+	if len(out.Sources.Greenhouse.Companies) != 1 {
+		t.Errorf("expected 1 company after dedup, got %d", len(out.Sources.Greenhouse.Companies))
+	}
+}
+
+func TestNormalize_DeduplicatesLocations(t *testing.T) {
+	c := validBase()
+	c.Filters.LocationsAllow = []string{"Texas", "texas", "TEXAS", "Austin"}
+	out, _ := NormalizeAndValidate(c)
+	// "texas" x3 deduped to 1, "austin" kept → 2 total
+	if len(out.Filters.LocationsAllow) != 2 {
+		t.Errorf("expected 2 locations after dedup, got %d: %v", len(out.Filters.LocationsAllow), out.Filters.LocationsAllow)
+	}
+}
+
+func TestNormalize_StripsBlankLocations(t *testing.T) {
+	c := validBase()
+	c.Filters.LocationsAllow = []string{"Texas", "", "  ", "Austin"}
+	out, _ := NormalizeAndValidate(c)
+	for _, loc := range out.Filters.LocationsAllow {
+		if strings.TrimSpace(loc) == "" {
+			t.Errorf("blank location survived normalization: %q", loc)
+		}
+	}
+}
+
+// ─── Greenhouse source validation ────────────────────────────────────────────
+
+func TestValidate_GreenhouseSource(t *testing.T) {
+	t.Run("enabled with no companies is an error", func(t *testing.T) {
+		c := validBase()
+		c.Sources.Greenhouse.Enabled = true
+		c.Sources.Greenhouse.Companies = nil
+		_, v := NormalizeAndValidate(c)
+		if !hasError(v, "greenhouse") {
+			t.Error("expected error for greenhouse enabled with no companies")
+		}
+	})
+
+	t.Run("unusual slug format is a warning", func(t *testing.T) {
+		c := validBase()
+		c.Sources.Greenhouse.Enabled = true
+		c.Sources.Greenhouse.Companies = []Company{{Slug: "My Company!", Name: "X"}}
+		_, v := NormalizeAndValidate(c)
+		if !hasWarning(v, "unusual") {
+			t.Error("expected warning for unusual slug")
+		}
+	})
+
+	t.Run("missing name is a warning", func(t *testing.T) {
+		c := validBase()
+		c.Sources.Greenhouse.Enabled = true
+		c.Sources.Greenhouse.Companies = []Company{{Slug: "stripe"}}
+		_, v := NormalizeAndValidate(c)
+		if !hasWarning(v, "missing name") {
+			t.Error("expected warning for missing company name")
+		}
+	})
+}
+
+// ─── Email validation ─────────────────────────────────────────────────────────
+
+func TestValidate_Email(t *testing.T) {
+	t.Run("enabled with no host is an error", func(t *testing.T) {
+		c := validBase()
+		c.Email.Enabled = true
+		c.Email.IMAPPort = 993
+		c.Email.Username = "user@example.com"
+		c.Email.Mailbox = "INBOX"
+		_, v := NormalizeAndValidate(c)
+		if !hasError(v, "imap_host") {
+			t.Error("expected error for missing imap_host")
+		}
+	})
+
+	t.Run("enabled with invalid port is an error", func(t *testing.T) {
+		c := validBase()
+		c.Email.Enabled = true
+		c.Email.IMAPHost = "imap.gmail.com"
+		c.Email.IMAPPort = 0
+		c.Email.Username = "user@example.com"
+		c.Email.Mailbox = "INBOX"
+		_, v := NormalizeAndValidate(c)
+		if !hasError(v, "imap_port") {
+			t.Error("expected error for invalid imap_port")
+		}
+	})
+
+	t.Run("enabled with empty subject list warns", func(t *testing.T) {
+		c := validBase()
+		c.Email.Enabled = true
+		c.Email.IMAPHost = "imap.gmail.com"
+		c.Email.IMAPPort = 993
+		c.Email.Username = "user@example.com"
+		c.Email.Mailbox = "INBOX"
+		_, v := NormalizeAndValidate(c)
+		if !hasWarning(v, "search_subject_any") {
+			t.Error("expected warning for empty search_subject_any")
+		}
+	})
+}
+
+// ─── Scoring rule validation ──────────────────────────────────────────────────
+
+func TestValidate_ScoringRules(t *testing.T) {
+	t.Run("rule with no tag is an error", func(t *testing.T) {
+		c := validBase()
+		c.Scoring.TitleRules = []Rule{{Tag: "", Weight: 10, Any: []string{"engineer"}}}
+		_, v := NormalizeAndValidate(c)
+		if !hasError(v, "title_rules") {
+			t.Error("expected error for rule missing tag")
+		}
+	})
+
+	t.Run("rule with empty any is an error", func(t *testing.T) {
+		c := validBase()
+		c.Scoring.TitleRules = []Rule{{Tag: "eng", Weight: 10, Any: nil}}
+		_, v := NormalizeAndValidate(c)
+		if !hasError(v, "title_rules") {
+			t.Error("expected error for rule with empty any[]")
+		}
+	})
+
+	t.Run("rule with weight=0 warns", func(t *testing.T) {
+		c := validBase()
+		c.Scoring.TitleRules = []Rule{{Tag: "eng", Weight: 0, Any: []string{"engineer"}}}
+		_, v := NormalizeAndValidate(c)
+		if !hasWarning(v, "weight=0") {
+			t.Error("expected warning for weight=0 rule")
+		}
+	})
+
+	t.Run("valid config produces no errors", func(t *testing.T) {
+		_, v := NormalizeAndValidate(validBase())
+		if !v.OK() {
+			t.Errorf("expected no errors, got: %v", v.Errors)
+		}
+	})
+}

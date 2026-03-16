@@ -9,7 +9,7 @@ import (
 
 	"jobhunt-engine/internal/config"
 	"jobhunt-engine/internal/events"
-	"jobhunt-engine/internal/scrape"
+	"jobhunt-engine/internal/scrape/types"
 )
 
 type ScrapeHandler struct {
@@ -21,18 +21,18 @@ type ScrapeHandler struct {
 }
 
 func (h ScrapeHandler) Status(w http.ResponseWriter, r *http.Request) {
-	st := h.ScrapeStatus.Load().(scrape.ScrapeStatus)
+	st := h.ScrapeStatus.Load().(types.ScrapeStatus)
 	writeJSON(w, st)
 }
 
 func (h ScrapeHandler) Run(w http.ResponseWriter, r *http.Request) {
-	st := h.ScrapeStatus.Load().(scrape.ScrapeStatus)
+	st := h.ScrapeStatus.Load().(types.ScrapeStatus)
 	if st.Running {
 		writeJSON(w, map[string]any{"ok": false, "msg": "already running"})
 		return
 	}
 
-	h.ScrapeStatus.Store(scrape.ScrapeStatus{
+	h.ScrapeStatus.Store(types.ScrapeStatus{
 		LastRunAt: time.Now().Format(time.RFC3339),
 		Running:   true,
 		LastError: "",
@@ -41,12 +41,11 @@ func (h ScrapeHandler) Run(w http.ResponseWriter, r *http.Request) {
 	})
 
 	go func() {
-		// optional: recover so Running doesn't get stuck true
 		defer func() {
 			if v := recover(); v != nil {
 				now := time.Now().Format(time.RFC3339)
 				nextAny := h.ScrapeStatus.Load()
-				next, _ := nextAny.(scrape.ScrapeStatus)
+				next, _ := nextAny.(types.ScrapeStatus)
 				next.Running = false
 				next.LastRunAt = now
 				next.LastError = fmt.Sprintf("panic: %v", v)
@@ -59,7 +58,7 @@ func (h ScrapeHandler) Run(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			now := time.Now().Format(time.RFC3339)
 			nextAny := h.ScrapeStatus.Load()
-			next, _ := nextAny.(scrape.ScrapeStatus)
+			next, _ := nextAny.(types.ScrapeStatus)
 			next.Running = false
 			next.LastRunAt = now
 			next.LastError = "config not loaded"
@@ -73,7 +72,7 @@ func (h ScrapeHandler) Run(w http.ResponseWriter, r *http.Request) {
 
 		now := time.Now().Format(time.RFC3339)
 		nextAny := h.ScrapeStatus.Load()
-		next, _ := nextAny.(scrape.ScrapeStatus)
+		next, _ := nextAny.(types.ScrapeStatus)
 		next.Running = false
 		next.LastRunAt = now
 		next.LastAdded = added

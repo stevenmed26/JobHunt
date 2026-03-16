@@ -1,5 +1,5 @@
 import { useRef, useEffect, useMemo, useState } from "react";
-import { EngineConfig, getConfig, putConfig, getScrapeStatus, runScrape, ScrapeStatus, setImapPassword } from "./api";
+import { EngineConfig, getConfig, putConfig, getScrapeStatus, runScrape, ScrapeStatus, setImapPassword, searchCompanies, discoverCompanies, extractCompaniesFromText, CompanyResult } from "./api";
 import { normalizeConfig } from "./configNormalize";
 
 function cloneCfg(cfg: EngineConfig): EngineConfig {
@@ -40,6 +40,59 @@ function textToCompanies(text: string): SourceCompany[] {
     .filter((x): x is SourceCompany => !!x && !!x.slug);
 }
 
+// Shared results list used by all three discovery tabs
+function ResultsList({ results, addedSlugs, onAdd }: {
+  results: CompanyResult[];
+  addedSlugs: Set<string>;
+  onAdd: (r: CompanyResult) => void;
+}) {
+  if (results.length === 0) return null;
+  return (
+    <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 6, maxHeight: 400, overflowY: "auto" }}>
+      {results.map((r) => {
+        const key = r.ats + ":" + r.slug;
+        const added = addedSlugs.has(key);
+        return (
+          <div key={key} style={{
+            display: "flex", alignItems: "center", gap: 10,
+            padding: "8px 12px", borderRadius: 10,
+            background: "rgba(255,255,255,0.04)",
+            border: "1px solid rgba(255,255,255,0.08)",
+          }}>
+            <span style={{
+              fontSize: 10, padding: "2px 7px", borderRadius: 999, flexShrink: 0,
+              background: r.ats === "greenhouse" ? "#1D9E75" : "#0A84FF",
+              color: "white", fontWeight: 600,
+            }}>
+              {r.ats}
+            </span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {r.name}
+              </div>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", fontFamily: "monospace" }}>
+                {r.slug}
+              </div>
+            </div>
+            <a href={r.jobUrl} target="_blank" rel="noreferrer"
+              style={{ fontSize: 12, color: "rgba(10,132,255,0.9)", textDecoration: "none", flexShrink: 0 }}>
+              View ↗
+            </a>
+            <button className="btn miniBtn" style={{
+              flexShrink: 0,
+              background: added ? "rgba(30,215,96,0.12)" : undefined,
+              color: added ? "rgba(30,215,96,0.8)" : undefined,
+              border: added ? "1px solid rgba(30,215,96,0.3)" : undefined,
+            }} onClick={() => !added && onAdd(r)} disabled={added}>
+              {added ? "✓ Added" : "Add"}
+            </button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function Scraping({ onBack }: { onBack: () => void }) {
   const [cfg, setCfg] = useState<EngineConfig | null>(null);
   const [st, setSt] = useState<ScrapeStatus | null>(null);
@@ -49,6 +102,27 @@ export default function Scraping({ onBack }: { onBack: () => void }) {
   const [pw, setPw] = useState("");
   const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [runningNow, setRunningNow] = useState(false);
+
+  // company search / discover / extract
+  const [companyTab, setCompanyTab] = useState<"search" | "discover" | "extract">("search");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchAts, setSearchAts] = useState<"greenhouse" | "lever" | "">("");
+  const [searchResults, setSearchResults] = useState<CompanyResult[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchErr, setSearchErr] = useState("");
+  const [addedSlugs, setAddedSlugs] = useState<Set<string>>(new Set());
+  // discover
+  const [discoverSource, setDiscoverSource] = useState<"greenhouse" | "lever">("lever");
+  const [discoverKeyword, setDiscoverKeyword] = useState("");
+  const [discoverResults, setDiscoverResults] = useState<CompanyResult[]>([]);
+  const [discoverLoading, setDiscoverLoading] = useState(false);
+  const [discoverTotal, setDiscoverTotal] = useState(0);
+  const [discoverErr, setDiscoverErr] = useState("");
+  // extract
+  const [extractText, setExtractText] = useState("");
+  const [extractResults, setExtractResults] = useState<CompanyResult[]>([]);
+  const [extractLoading, setExtractLoading] = useState(false);
+  const [extractErr, setExtractErr] = useState("");
 
   // local textareas for ATS company lists (keeps typing smooth)
   const [ghText, setGhText] = useState("");
@@ -112,6 +186,64 @@ export default function Scraping({ onBack }: { onBack: () => void }) {
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  async function doDiscover() {
+    setDiscoverLoading(true);
+    setDiscoverErr("");
+    setDiscoverResults([]);
+    try {
+      const res = await discoverCompanies(discoverSource, discoverKeyword || undefined);
+      setDiscoverResults(res.results);
+      setDiscoverTotal(res.total);
+      if (res.results.length === 0) setDiscoverErr("No boards found. Try a different keyword or source.");
+    } catch (e: any) {
+      setDiscoverErr(String(e?.message ?? e));
+    } finally {
+      setDiscoverLoading(false);
+    }
+  }
+
+  async function doExtract() {
+    if (!extractText.trim()) return;
+    setExtractLoading(true);
+    setExtractErr("");
+    setExtractResults([]);
+    try {
+      const results = await extractCompaniesFromText(extractText);
+      setExtractResults(results);
+      if (results.length === 0) setExtractErr("No Greenhouse or Lever URLs found in the text.");
+    } catch (e: any) {
+      setExtractErr(String(e?.message ?? e));
+    } finally {
+      setExtractLoading(false);
+    }
+  }
+
+  async function doSearch() {
+    if (searchQuery.trim().length < 2) return;
+    setSearchLoading(true);
+    setSearchErr("");
+    setSearchResults([]);
+    try {
+      const results = await searchCompanies(searchQuery.trim(), searchAts || undefined);
+      setSearchResults(results);
+      if (results.length === 0) setSearchErr("No boards found. Try a shorter name or different spelling.");
+    } catch (e: any) {
+      setSearchErr(String(e?.message ?? e));
+    } finally {
+      setSearchLoading(false);
+    }
+  }
+
+  function addCompany(result: CompanyResult) {
+    const line = `${result.slug} | ${result.name}`;
+    if (result.ats === "greenhouse") {
+      setGhText(t => t ? t + "" + line : line);
+    } else {
+      setLeverText(t => t ? t + "" + line : line);
+    }
+    setAddedSlugs(s => { const next = new Set(s); next.add(result.ats + ":" + result.slug); return next; });
+  }
 
   async function save() {
     if (!cfg) return;
@@ -347,6 +479,130 @@ export default function Scraping({ onBack }: { onBack: () => void }) {
               </button>
             </div>
           </>
+        )}
+      </div>
+
+      {/* Company Discovery Panel */}
+      <div className="atsPanel" style={{ marginTop: 16 }}>
+        <div className="atsHead">
+          <div className="atsTitle">Discover Companies</div>
+          <div className="atsHint">Find Greenhouse &amp; Lever boards you can add to your sources.</div>
+        </div>
+
+        {/* Tab bar */}
+        <div style={{ display: "flex", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+          {(["search", "discover", "extract"] as const).map((t) => (
+            <button key={t} onClick={() => setCompanyTab(t)} style={{
+              padding: "9px 16px", fontSize: 12, border: "none", cursor: "pointer",
+              background: companyTab === t ? "rgba(255,255,255,0.06)" : "transparent",
+              color: companyTab === t ? "rgba(255,255,255,0.92)" : "rgba(255,255,255,0.4)",
+              borderBottom: companyTab === t ? "2px solid rgba(10,132,255,0.8)" : "2px solid transparent",
+              fontWeight: companyTab === t ? 600 : 400,
+            }}>
+              {t === "search" ? "🔍 Search by name" : t === "discover" ? "🌐 Browse all" : "📋 Paste URLs"}
+            </button>
+          ))}
+        </div>
+
+        {/* ── Search tab ── */}
+        {companyTab === "search" && (
+          <div className="atsSection">
+            <div className="help" style={{ marginBottom: 10 }}>
+              Know a company name? Search to find their exact ATS slug.
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <input
+                className="input"
+                style={{ flex: 1, minWidth: 180 }}
+                placeholder="e.g. Stripe, Scale AI, Notion..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") doSearch(); }}
+              />
+              <select style={{ borderRadius: 10, padding: "8px 12px", background: "#1c1c1e",
+                border: "1px solid rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.92)",
+                fontSize: 13, colorScheme: "dark" as any }}
+                value={searchAts} onChange={(e) => setSearchAts(e.target.value as any)}>
+                <option value="">Both</option>
+                <option value="greenhouse">Greenhouse</option>
+                <option value="lever">Lever</option>
+              </select>
+              <button className="btn btnPrimary" style={{ fontSize: 12, padding: "8px 16px" }}
+                onClick={doSearch} disabled={searchLoading || searchQuery.trim().length < 2}>
+                {searchLoading ? "Searching…" : "Search"}
+              </button>
+            </div>
+            {searchErr && <div style={{ marginTop: 8, fontSize: 12, color: "rgba(255,69,58,0.9)" }}>{searchErr}</div>}
+            <ResultsList results={searchResults} addedSlugs={addedSlugs} onAdd={addCompany} />
+          </div>
+        )}
+
+        {/* ── Discover tab ── */}
+        {companyTab === "discover" && (
+          <div className="atsSection">
+            <div className="help" style={{ marginBottom: 10 }}>
+              <strong style={{ color: "rgba(255,255,255,0.7)" }}>Lever:</strong> Fetches the full Lever sitemap — every company currently posting jobs.{" "}
+              <strong style={{ color: "rgba(255,255,255,0.7)" }}>Greenhouse:</strong> Probes ~300 known tech companies in parallel.
+              Filter by keyword to narrow results.
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <select style={{ borderRadius: 10, padding: "8px 12px", background: "#1c1c1e",
+                border: "1px solid rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.92)",
+                fontSize: 13, colorScheme: "dark" as any }}
+                value={discoverSource} onChange={(e) => setDiscoverSource(e.target.value as any)}>
+                <option value="lever">Lever (sitemap)</option>
+                <option value="greenhouse">Greenhouse (probe)</option>
+              </select>
+              <input
+                className="input"
+                style={{ flex: 1, minWidth: 140 }}
+                placeholder="Filter by keyword (optional)"
+                value={discoverKeyword}
+                onChange={(e) => setDiscoverKeyword(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") doDiscover(); }}
+              />
+              <button className="btn btnPrimary" style={{ fontSize: 12, padding: "8px 16px" }}
+                onClick={doDiscover} disabled={discoverLoading}>
+                {discoverLoading ? "Loading…" : "Discover"}
+              </button>
+            </div>
+            {discoverErr && <div style={{ marginTop: 8, fontSize: 12, color: "rgba(255,69,58,0.9)" }}>{discoverErr}</div>}
+            {discoverResults.length > 0 && (
+              <div style={{ marginTop: 8, fontSize: 11, color: "rgba(255,255,255,0.35)" }}>
+                Showing {discoverResults.length} of {discoverTotal} probed
+              </div>
+            )}
+            <ResultsList results={discoverResults} addedSlugs={addedSlugs} onAdd={addCompany} />
+          </div>
+        )}
+
+        {/* ── Extract tab ── */}
+        {companyTab === "extract" && (
+          <div className="atsSection">
+            <div className="help" style={{ marginBottom: 10 }}>
+              Paste anything — a job alert email, a webpage, a list of URLs. JobHunt will extract
+              every Greenhouse and Lever company it finds.
+            </div>
+            <textarea
+              className="atsTextarea"
+              style={{ minHeight: 120 }}
+              placeholder={"Paste emails, job board pages, or URLs here...\nhttps://boards.greenhouse.io/stripe\nhttps://jobs.lever.co/openai/abc-123"}
+              value={extractText}
+              onChange={(e) => setExtractText(e.target.value)}
+            />
+            <button className="btn btnPrimary" style={{ fontSize: 12, padding: "8px 16px", marginTop: 8 }}
+              onClick={doExtract} disabled={extractLoading || !extractText.trim()}>
+              {extractLoading ? "Extracting…" : "Extract companies"}
+            </button>
+            {extractErr && <div style={{ marginTop: 8, fontSize: 12, color: "rgba(255,69,58,0.9)" }}>{extractErr}</div>}
+            <ResultsList results={extractResults} addedSlugs={addedSlugs} onAdd={addCompany} />
+          </div>
+        )}
+
+        {(searchResults.length > 0 || discoverResults.length > 0 || extractResults.length > 0) && (
+          <div style={{ padding: "6px 14px 10px", fontSize: 11, color: "rgba(255,255,255,0.3)" }}>
+            Click Add to insert into the source lists below, then Save.
+          </div>
         )}
       </div>
 

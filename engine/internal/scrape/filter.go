@@ -69,8 +69,6 @@ func passesLocation(cfg config.Config, j domain.JobLead) bool {
 }
 
 func matchesAnyRule(cfg config.Config, j domain.JobLead) bool {
-	// We only want “positive hit exists”, not scoring math.
-	// TitleRules + KeywordRules both count.
 	text := strings.ToLower(j.Title + " " + j.Description)
 
 	hit := func(rules []config.Rule) bool {

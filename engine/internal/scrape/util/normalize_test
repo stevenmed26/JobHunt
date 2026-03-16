@@ -1,0 +1,130 @@
+package util
+
+import "testing"
+
+// ─── CleanText ────────────────────────────────────────────────────────────────
+
+func TestCleanText(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"", ""},
+		{"  hello  ", "hello"},
+		{"hello\u00a0world", "hello world"}, // non-breaking space
+		{"  multiple   spaces  ", "multiple spaces"},
+		{"\t tabbed \t", "tabbed"},
+		{"line\nbreak", "line break"},
+	}
+	for _, tc := range tests {
+		got := CleanText(tc.in)
+		if got != tc.want {
+			t.Errorf("CleanText(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// ─── NormalizeLocation ────────────────────────────────────────────────────────
+
+func TestNormalizeLocation(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"", ""},
+		{"  Austin, TX  ", "Austin, TX"},
+		{"Location: Dallas, TX", "Dallas, TX"},
+		{"LOCATIONS: New York, NY", "New York, NY"},
+		// Deduplicates parts
+		{"Austin, TX, Austin", "Austin, TX"},
+		// Normalises non-breaking spaces
+		{"Austin,\u00a0TX", "Austin, TX"},
+	}
+	for _, tc := range tests {
+		got := NormalizeLocation(tc.in)
+		if got != tc.want {
+			t.Errorf("NormalizeLocation(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// ─── InferWorkModeFromText ────────────────────────────────────────────────────
+
+func TestInferWorkModeFromText(t *testing.T) {
+	tests := []struct {
+		location, title, desc string
+		want                  string
+	}{
+		{"Remote", "", "", "Remote"},
+		{"", "Remote Software Engineer", "", "Remote"},
+		{"", "", "This is a fully remote position", "Remote"},
+		{"", "Hybrid Engineer", "", "Hybrid"},
+		{"", "", "Hybrid work schedule available", "Hybrid"},
+		{"", "On-site Engineer", "", "Onsite"},
+		{"", "", "Must be onsite 5 days a week", "Onsite"},
+		{"Dallas, TX", "Software Engineer", "Great opportunity", "Unknown"},
+		{"", "", "", "Unknown"},
+		// Remote beats hybrid when both present
+		{"Remote, Hybrid options", "", "", "Remote"},
+	}
+	for _, tc := range tests {
+		got := InferWorkModeFromText(tc.location, tc.title, tc.desc)
+		if got != tc.want {
+			t.Errorf("InferWorkModeFromText(%q, %q, %q) = %q, want %q",
+				tc.location, tc.title, tc.desc, got, tc.want)
+		}
+	}
+}
+
+// ─── ExtractLocationFromLabeledText ──────────────────────────────────────────
+
+func TestExtractLocationFromLabeledText(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"", ""},
+		{"No location info here", ""},
+		{"Location: Austin, TX", "Austin, TX"},
+		{"Locations: New York, NY", "New York, NY"},
+		{"Job Location: Remote", "Remote"},
+		// Stops at newline
+		{"Location: Dallas, TX\nSalary: $100k", "Dallas, TX"},
+		// Stops at pipe separator
+		{"Location: Austin, TX | Apply Now", "Austin, TX"},
+		// Stops at middle dot
+		{"Location: Chicago, IL · Full time", "Chicago, IL"},
+		// Too long — ignored
+		{"Location: " + string(make([]byte, 81)), ""},
+		// Case insensitive
+		{"LOCATION: Boston, MA", "Boston, MA"},
+	}
+	for _, tc := range tests {
+		got := ExtractLocationFromLabeledText(tc.in)
+		if got != tc.want {
+			t.Errorf("ExtractLocationFromLabeledText(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// ─── LooksLikeJunkTitle ───────────────────────────────────────────────────────
+
+func TestLooksLikeJunkTitle(t *testing.T) {
+	tests := []struct {
+		in   string
+		want bool
+	}{
+		{"Software Engineer", false},
+		{"View all jobs", true},
+		{"Apply Now", true},
+		{"VIEW JOBS", true},
+		{"Senior Apply Engineer", true}, // contains "apply"
+		{"", false},
+	}
+	for _, tc := range tests {
+		got := LooksLikeJunkTitle(tc.in)
+		if got != tc.want {
+			t.Errorf("LooksLikeJunkTitle(%q) = %v, want %v", tc.in, got, tc.want)
+		}
+	}
+}

@@ -48,7 +48,6 @@ ON CONFLICT(company) DO UPDATE SET
 	return err
 }
 
-// normalizeCompanyKey makes your cache stable (avoid duplicates due to case/spacing)
 func normalizeCompanyKey(s string) string {
 	s = strings.TrimSpace(s)
 	s = strings.Join(strings.Fields(s), " ")
