@@ -1,6 +1,6 @@
 [package]
 name        = "jobhunt"
-version     = "1.1.0"
+version     = "1.1.1"
 description = "Self-hosted desktop job hunting tool — scrapes ATS boards, scores listings, and auto-fills applications"
 authors     = ["Steven Mediterraneo"]
 edition     = "2021"
