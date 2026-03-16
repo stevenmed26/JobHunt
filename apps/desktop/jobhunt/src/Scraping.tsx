@@ -174,8 +174,6 @@ export default function Scraping({ onBack }: { onBack: () => void }) {
         const s = (c as any).sources;
         setGhText(companiesToText(s?.greenhouse?.companies));
         setLeverText(companiesToText(s?.lever?.companies));
-        setWdText(companiesToText(s?.workday?.companies));
-        setSRText(companiesToText(s?.smartrecruiters?.companies));
       } catch (e: any) {
         setErr(String(e?.message ?? e));
       }
@@ -260,12 +258,8 @@ export default function Scraping({ onBack }: { onBack: () => void }) {
       c.sources = c.sources ?? {};
       c.sources.greenhouse = c.sources.greenhouse ?? { enabled: false, companies: [] };
       c.sources.lever = c.sources.lever ?? { enabled: false, companies: [] };
-      c.sources.workday = c.sources.workday ?? { enabled: false, companies: [] };
-      c.sources.smartrecruiters = c.sources.smartrecruiters ?? { enabled: false, companies: [] };
       c.sources.greenhouse.companies = textToCompanies(ghText);
       c.sources.lever.companies = textToCompanies(leverText);
-      c.sources.workday.companies = textToCompanies(wdText);
-      c.sources.smartrecruiters.companies = textToCompanies(sRText);
 
       const saved = await putConfig(c);
       const norm = normalizeConfig(saved);
@@ -275,8 +269,6 @@ export default function Scraping({ onBack }: { onBack: () => void }) {
       const s = (norm as any).sources;
       setGhText(companiesToText(s?.greenhouse?.companies));
       setLeverText(companiesToText(s?.lever?.companies));
-      setWdText(companiesToText(s?.workday?.companies));
-      setSRText(companiesToText(s?.smartrecruiters?.companies));
     } catch (e: any) {
       setErr(String(e?.message ?? e));
     } finally {
