@@ -59,9 +59,12 @@ func TestShouldKeepJob(t *testing.T) {
 			wantReason: "location",
 		},
 		{
-			name:       "no keyword match",
+			// "Remote" with remote_ok=false is blocked at the location stage
+			// before keyword matching even runs — reason is "location", not "no_keyword_match".
+			// To test the keyword path, use a non-remote location that passes location checks.
+			name:       "no keyword match — location passes, keyword fails",
 			cfg:        cfgWithRules(rule("eng", 10, "engineer")),
-			job:        job("Marketing Manager", "Remote"),
+			job:        job("Marketing Manager", "Dallas, TX"),
 			wantKeep:   false,
 			wantReason: "no_keyword_match",
 		},
