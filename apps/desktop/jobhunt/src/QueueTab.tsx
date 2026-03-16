@@ -10,7 +10,6 @@ export function QueueTab({
   onFill,
   onRemove,
   onScrapedFieldChange,
-  onFieldChange,
   onApply,
   onScrapeAll,
 }: {

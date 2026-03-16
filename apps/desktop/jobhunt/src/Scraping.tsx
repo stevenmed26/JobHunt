@@ -127,8 +127,6 @@ export default function Scraping({ onBack }: { onBack: () => void }) {
   // local textareas for ATS company lists (keeps typing smooth)
   const [ghText, setGhText] = useState("");
   const [leverText, setLeverText] = useState("");
-  const [wdText, setWdText] = useState("");
-  const [sRText, setSRText] = useState("");
   const lastSavedRef = useRef<string>("");
 
   async function saveIfNeeded(next: string) {
