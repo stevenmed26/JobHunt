@@ -14,6 +14,70 @@ A self-hosted desktop application for finding, filtering, and applying to softwa
 - **OS keyring secret storage** — Groq API key and IMAP password never touch the frontend
 - **Per-host rate limiting** — respects ATS servers with token-bucket throttling
 
+## Browser Extension (Optional)
+
+JobHunt includes an experimental browser extension that allows you to auto-fill Greenhouse and Lever job application forms directly from your browser.
+
+The extension uses the same AI pipeline as the desktop Auto Apply system but operates on any supported form you open manually.
+
+### What it does
+
+When you click **Auto Apply** in the extension:
+
+1. The extension scrapes the current job application form.
+2. The scraped fields are sent to the JobHunt engine.
+3. Groq generates answers using your saved applicant profile.
+4. The extension injects the completed fields back into the page.
+5. A cover letter is generated and optionally saved to disk.
+
+The browser remains open so you can:
+
+- upload your resume
+- solve CAPTCHAs
+- review answers
+- submit the application manually
+
+### Supported ATS platforms
+
+- Greenhouse
+- Lever
+
+Other ATS platforms may partially work but are not officially supported yet.
+
+### Requirements
+
+The JobHunt engine must be running locally because the extension relies on the engine for:
+
+- Groq AI requests
+- applicant profile access
+- cover letter generation
+- optional cover letter file saving
+
+If the engine is not running, the extension cannot complete AI prompts.
+
+### Installing the extension
+
+1. Open Chrome or a Chromium-based browser.
+2. Navigate to `chrome://extensions`.
+3. Enable **Developer mode**.
+4. Click **Load unpacked**.
+5. Select the `extension/` directory from the JobHunt project.
+
+### Using the extension
+
+1. Open a Greenhouse or Lever job application page.
+2. Click the JobHunt extension icon.
+3. Press **Auto Apply**.
+4. Review the injected fields before submitting.
+
+### Limitations
+
+- Resume uploads still require manual interaction (browser security restrictions prevent automatic file uploads).
+- CAPTCHA challenges must be solved manually.
+- Some custom ATS widgets may require manual adjustment after injection.
+
+The extension is intended as a **fast assistive tool**, while the desktop Auto Apply pipeline remains the most reliable full workflow.
+
 ---
 
 ## Architecture
