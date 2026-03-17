@@ -336,9 +336,18 @@ async function runScrapeAndFill() {
     return;
   }
 
-  renderFields(fields);
-  show('Review');
-  setStatus('green', 'Review fields then click Fill');
+  // Inject immediately — no manual review step
+  workingMsg.textContent = 'Injecting into form…';
+  try {
+    const res = await sendToContent(currentTab.id, { type: 'INJECT_FIELDS', fields });
+    currentFields = fields;
+    successCount.textContent = `${res.filled} of ${fields.filter(f => f.type !== 'file').length} fields filled`;
+    show('Success');
+    setStatus('green', 'Done — review and submit');
+  } catch (e) {
+    show('Ready');
+    setStatus('red', 'Inject failed: ' + e.message);
+  }
 }
 
 async function runInject() {
@@ -360,7 +369,15 @@ async function runInject() {
 
 btnScrape.addEventListener('click', runScrapeAndFill);
 btnRescrape.addEventListener('click', runScrapeAndFill);
-btnFillAgain.addEventListener('click', () => { show('Review'); });
+btnFillAgain.addEventListener('click', () => {
+  if (currentFields.length > 0) {
+    renderFields(currentFields);
+    show('Review');
+    setStatus('green', 'Edit fields then click Fill');
+  } else {
+    runScrapeAndFill();
+  }
+});
 btnFill.addEventListener('click', runInject);
 
 // ─── Boot ─────────────────────────────────────────────────────────────────────

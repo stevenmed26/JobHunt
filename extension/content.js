@@ -258,6 +258,98 @@ async function injectFields(filledFields) {
 
 // ─── Message handler ──────────────────────────────────────────────────────────
 
+// ─── Floating button ──────────────────────────────────────────────────────────
+// Injected directly onto Greenhouse/Lever pages so users don't need to click
+// the toolbar icon. Chrome cannot auto-open a popup programmatically.
+
+function injectFloatingButton() {
+  if (document.getElementById('jh-float-btn')) return; // already injected
+
+  const btn = document.createElement('button');
+  btn.id = 'jh-float-btn';
+  btn.innerHTML = '⚡ JobHunt';
+  btn.title = 'Auto Apply with JobHunt';
+  Object.assign(btn.style, {
+    position:     'fixed',
+    bottom:       '24px',
+    right:        '24px',
+    zIndex:       '2147483647',
+    padding:      '10px 20px',
+    background:   '#0a84ff',
+    color:        'white',
+    border:       'none',
+    borderRadius: '999px',
+    fontSize:     '13px',
+    fontWeight:   '700',
+    fontFamily:   'ui-sans-serif, system-ui, -apple-system, sans-serif',
+    cursor:       'pointer',
+    boxShadow:    '0 4px 20px rgba(10,132,255,0.45)',
+    transition:   'transform 120ms ease, box-shadow 120ms ease',
+    letterSpacing:'-0.01em',
+  });
+
+  btn.addEventListener('mouseenter', () => {
+    btn.style.transform  = 'translateY(-2px)';
+    btn.style.boxShadow  = '0 6px 26px rgba(10,132,255,0.6)';
+  });
+  btn.addEventListener('mouseleave', () => {
+    btn.style.transform  = '';
+    btn.style.boxShadow  = '0 4px 20px rgba(10,132,255,0.45)';
+  });
+
+  btn.addEventListener('click', () => {
+    chrome.runtime.sendMessage({ type: 'FLOAT_BTN_CLICKED' });
+  });
+
+  document.body.appendChild(btn);
+}
+
+// Set button state from popup messages
+function setFloatState(state, msg) {
+  const btn = document.getElementById('jh-float-btn');
+  if (!btn) return;
+  if (state === 'working') {
+    btn.innerHTML = '⏳ ' + (msg || 'Working…');
+    btn.style.background = 'rgba(255,199,0,0.9)';
+    btn.style.color = '#000';
+    btn.disabled = true;
+  } else if (state === 'done') {
+    btn.innerHTML = '✓ ' + (msg || 'Filled');
+    btn.style.background = 'rgba(30,215,96,0.9)';
+    btn.style.color = '#000';
+    btn.disabled = false;
+    setTimeout(() => {
+      btn.innerHTML = '⚡ JobHunt';
+      btn.style.background = '#0a84ff';
+      btn.style.color = 'white';
+    }, 3000);
+  } else if (state === 'error') {
+    btn.innerHTML = '✗ ' + (msg || 'Error');
+    btn.style.background = 'rgba(255,69,58,0.9)';
+    btn.style.color = 'white';
+    btn.disabled = false;
+    setTimeout(() => {
+      btn.innerHTML = '⚡ JobHunt';
+      btn.style.background = '#0a84ff';
+      btn.style.color = 'white';
+    }, 3000);
+  } else {
+    btn.innerHTML = '⚡ JobHunt';
+    btn.style.background = '#0a84ff';
+    btn.style.color = 'white';
+    btn.disabled = false;
+  }
+}
+
+// Inject button when DOM is ready
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', injectFloatingButton);
+} else {
+  injectFloatingButton();
+}
+
+// ─── Message handler ──────────────────────────────────────────────────────────
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === 'GET_PAGE_INFO') {
     sendResponse({
@@ -284,5 +376,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       sendResponse({ filled: count });
     })();
     return true; // async
+  }
+
+  if (msg.type === 'SET_FLOAT_STATE') {
+    setFloatState(msg.state, msg.msg);
+    sendResponse({});
+    return false;
   }
 });
