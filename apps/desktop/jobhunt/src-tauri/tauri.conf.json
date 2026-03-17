@@ -30,7 +30,8 @@
     "resources": [
       "filler/filler.js",
       "filler/package.json",
-      "filler/node_modules/**/*"
+      "filler/node_modules/**/*",
+      "extension/**/*"
     ],
     "icon": ["icons/icon.ico"]
   },

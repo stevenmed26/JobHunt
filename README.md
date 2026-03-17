@@ -55,13 +55,24 @@ The JobHunt engine must be running locally because the extension relies on the e
 
 If the engine is not running, the extension cannot complete AI prompts.
 
-### Installing the extension
+### Where the extension files are installed
 
-1. Open Chrome or a Chromium-based browser.
-2. Navigate to `chrome://extensions`.
-3. Enable **Developer mode**.
-4. Click **Load unpacked**.
-5. Select the `extension/` directory from the JobHunt project.
+When JobHunt is installed, the browser extension source is bundled into the application resources.
+
+This makes it possible to load the extension manually in Chrome or other Chromium-based browsers using **Load unpacked**.
+
+Typical flow:
+
+1. Install JobHunt
+2. Open `chrome://extensions`
+3. Enable **Developer mode**
+4. Click **Load unpacked**
+5. Browse to the installed JobHunt extension resource folder
+
+Note:
+- The installer includes the extension files, but it does **not** automatically install the browser extension into Chrome
+- Resume uploads and CAPTCHA steps must still be completed manually
+- The JobHunt desktop app or engine must be running locally for the extension to use AI autofill and cover letter generation
 
 ### Using the extension
 
