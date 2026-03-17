@@ -148,16 +148,19 @@ Write ONLY the cover letter as plain text — no JSON, no markdown, nothing else
       const text = (data.text || '').trim();
       if (text) {
         coverFields.forEach(f => { answers[f.selector] = text; });
-        // Save to file — fire and forget, works even if form injection fails
-        const companyGuess = (profile.company || '').trim().slice(0, 40) || 'Company';
-        enginePost('/api/cover-letter/save', {
-          firstName:   profile.firstName || '',
-          lastName:    profile.lastName  || '',
-          companyName: companyGuess,
-          content:     text,
-          saveDir:     profile.coverLetterSaveDir || '',
-        }).then(r => console.log('[JobHunt BG] Cover letter saved →', r.path))
-          .catch(e => console.warn('[JobHunt BG] Cover letter save failed:', e));
+        if (profile.saveCoverLetterEnabled !== false) {
+          const companyGuess = (profile.company || '').trim().slice(0, 40) || 'Company';
+          enginePost('/api/cover-letter/save', {
+            firstName:   profile.firstName || '',
+            lastName:    profile.lastName  || '',
+            companyName: companyGuess,
+            content:     text,
+            saveDir:     profile.coverLetterSaveDir || '',
+          }).then(r => console.log('[JobHunt] ✓ Cover letter saved →', r.path))
+            .catch(e => console.warn('[JobHunt] ✗ Cover letter save failed:', e?.message ?? e));
+        } else {
+          console.log('[JobHunt] Cover letter save skipped (disabled in profile)');
+        }
       }
     } catch (e) {
       console.warn('[JobHunt BG] Cover letter failed:', e);

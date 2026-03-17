@@ -72,6 +72,135 @@ function SelectField({
   );
 }
 
+// ─── Cover letter log ────────────────────────────────────────────────────────
+
+const COVER_LOG_KEY = "jh_cover_letter_log_v1";
+const MAX_LOG_ENTRIES = 50;
+
+export interface CoverLetterLogEntry {
+  ts:      number;   // unix ms
+  status:  "saved" | "skipped" | "failed" | "injected";
+  path?:   string;
+  company: string;
+  message: string;
+}
+
+export function appendCoverLetterLog(entry: Omit<CoverLetterLogEntry, "ts">) {
+  try {
+    const raw  = localStorage.getItem(COVER_LOG_KEY);
+    const log: CoverLetterLogEntry[] = raw ? JSON.parse(raw) : [];
+    log.unshift({ ...entry, ts: Date.now() });
+    if (log.length > MAX_LOG_ENTRIES) log.splice(MAX_LOG_ENTRIES);
+    localStorage.setItem(COVER_LOG_KEY, JSON.stringify(log));
+    // Dispatch event so the log component re-renders if it's open
+    window.dispatchEvent(new CustomEvent("jh_cover_log_updated"));
+  } catch {}
+}
+
+function useCoverLetterLog() {
+  const [log, setLog] = React.useState<CoverLetterLogEntry[]>(() => {
+    try {
+      const raw = localStorage.getItem(COVER_LOG_KEY);
+      return raw ? JSON.parse(raw) : [];
+    } catch { return []; }
+  });
+
+  React.useEffect(() => {
+    function refresh() {
+      try {
+        const raw = localStorage.getItem(COVER_LOG_KEY);
+        setLog(raw ? JSON.parse(raw) : []);
+      } catch {}
+    }
+    window.addEventListener("jh_cover_log_updated", refresh);
+    return () => window.removeEventListener("jh_cover_log_updated", refresh);
+  }, []);
+
+  function clear() {
+    localStorage.removeItem(COVER_LOG_KEY);
+    setLog([]);
+    window.dispatchEvent(new CustomEvent("jh_cover_log_updated"));
+  }
+
+  return { log, clear };
+}
+
+const STATUS_ICON: Record<CoverLetterLogEntry["status"], string> = {
+  saved:    "✓",
+  injected: "↗",
+  skipped:  "–",
+  failed:   "✗",
+};
+const STATUS_COLOR: Record<CoverLetterLogEntry["status"], string> = {
+  saved:    "rgba(30,215,96,0.9)",
+  injected: "rgba(10,132,255,0.9)",
+  skipped:  "rgba(255,255,255,0.35)",
+  failed:   "rgba(255,69,58,0.9)",
+};
+
+function CoverLetterLog() {
+  const { log, clear } = useCoverLetterLog();
+  const [expanded, setExpanded] = React.useState(false);
+
+  return (
+    <div style={{ borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+      <button
+        style={{
+          width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between",
+          padding: "9px 14px", background: "transparent", border: "none", cursor: "pointer",
+          color: "rgba(255,255,255,0.55)", fontSize: 11,
+        }}
+        onClick={() => setExpanded(x => !x)}
+      >
+        <span>Activity log ({log.length})</span>
+        <span style={{ transform: expanded ? "rotate(90deg)" : "none", transition: "transform 150ms" }}>›</span>
+      </button>
+
+      {expanded && (
+        <div style={{ padding: "0 14px 12px" }}>
+          {log.length === 0 ? (
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", padding: "6px 0" }}>
+              No activity yet. Cover letters will appear here after being generated.
+            </div>
+          ) : (
+            <>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 200, overflowY: "auto" }}>
+                {log.map((entry, i) => (
+                  <div key={i} style={{
+                    display: "flex", gap: 8, alignItems: "flex-start",
+                    fontSize: 11, padding: "5px 8px", borderRadius: 8,
+                    background: "rgba(255,255,255,0.03)",
+                  }}>
+                    <span style={{ color: STATUS_COLOR[entry.status], flexShrink: 0, fontWeight: 700, width: 12 }}>
+                      {STATUS_ICON[entry.status]}
+                    </span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 600, color: "rgba(255,255,255,0.8)" }}>{entry.company}</div>
+                      <div style={{ color: "rgba(255,255,255,0.4)", marginTop: 1, wordBreak: "break-all" }}>
+                        {entry.message}
+                      </div>
+                    </div>
+                    <span style={{ color: "rgba(255,255,255,0.25)", flexShrink: 0 }}>
+                      {new Date(entry.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <button
+                className="btn miniBtn"
+                style={{ marginTop: 8, opacity: 0.4, fontSize: 11 }}
+                onClick={clear}
+              >
+                Clear log
+              </button>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── ProfileTab ───────────────────────────────────────────────────────────────
 
 export function ProfileTab({
@@ -287,31 +416,60 @@ export function ProfileTab({
           minHeight={140}
         />
 
-        {/* Cover letter save directory */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          <span style={{ fontSize: 13, fontWeight: 600 }}>Cover letter save folder</span>
-          <span className="help">
-            Where Groq-generated cover letters are saved as .txt files.
-            Defaults to Documents/JobHunt/CoverLetters if left blank.
-          </span>
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <input
-              className="input"
-              style={{ flex: 1, fontFamily: "monospace", fontSize: 12 }}
-              value={profile.coverLetterSaveDir}
-              placeholder="e.g. C:\Users\You\Documents\CoverLetters"
-              onChange={(e) => updateProfile("coverLetterSaveDir", e.target.value)}
-            />
-            {profile.coverLetterSaveDir && (
-              <button
-                className="btn miniBtn"
-                style={{ opacity: 0.5, flexShrink: 0 }}
-                onClick={() => updateProfile("coverLetterSaveDir", "")}
-              >
-                Clear
-              </button>
-            )}
+        {/* Cover letter auto-save */}
+        <div style={{ border: "1px solid rgba(255,255,255,0.08)", borderRadius: 12, overflow: "hidden" }}>
+          {/* Toggle row */}
+          <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", background: "rgba(255,255,255,0.03)" }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>Save cover letters to disk</div>
+              <div className="help" style={{ marginTop: 2 }}>
+                Every Groq-generated cover letter is saved as a .txt file named
+                <br />
+                <code style={{ fontSize: 11 }}>FirstName_LastName_Cover_Letter_Company.txt</code>
+              </div>
+            </div>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", flexShrink: 0 }}>
+              <input
+                type="checkbox"
+                className="checkbox"
+                checked={profile.saveCoverLetterEnabled !== false}
+                onChange={(e) => updateProfile("saveCoverLetterEnabled", e.target.checked)}
+              />
+              <span style={{ fontSize: 12, color: profile.saveCoverLetterEnabled !== false ? "rgba(30,215,96,0.9)" : "rgba(255,255,255,0.4)" }}>
+                {profile.saveCoverLetterEnabled !== false ? "Enabled" : "Disabled"}
+              </span>
+            </label>
           </div>
+
+          {/* Directory input — only shown when enabled */}
+          {profile.saveCoverLetterEnabled !== false && (
+            <div style={{ padding: "10px 14px", borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+              <div className="help" style={{ marginBottom: 6 }}>
+                Save folder — leave blank to use <code style={{ fontSize: 11 }}>Documents/JobHunt/CoverLetters</code>
+              </div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input
+                  className="input"
+                  style={{ flex: 1, fontFamily: "monospace", fontSize: 12 }}
+                  value={profile.coverLetterSaveDir}
+                  placeholder="Default: Documents/JobHunt/CoverLetters"
+                  onChange={(e) => updateProfile("coverLetterSaveDir", e.target.value)}
+                />
+                {profile.coverLetterSaveDir && (
+                  <button
+                    className="btn miniBtn"
+                    style={{ opacity: 0.5, flexShrink: 0 }}
+                    onClick={() => updateProfile("coverLetterSaveDir", "")}
+                  >
+                    Reset
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Log viewer */}
+          <CoverLetterLog />
         </div>
 
         <DocumentField

@@ -1,6 +1,7 @@
 // src/applyLLM.ts — Groq fill logic for both profile fields and scraped form fields
 
 import { callLLM, getJobDescription, saveCoverLetter, ScrapedField } from "./api";
+import { appendCoverLetterLog } from "./ProfileTab";
 import type { ApplicantProfile, ApplicationDraft, ApplicationField } from "./types";
 
 export async function fetchJobDescription(jobId: number): Promise<string> {
@@ -203,18 +204,27 @@ ${jobDescription || "(not available)"}`;
         // Save to file as fallback — useful when form injection fails
         // Company name is extracted from the job description (first line heuristic)
         const companyGuess = jobDescription
-          ? jobDescription.split(/[.]/)[0].replace(/^(about|at|join|work at)\s+/i, "").trim().slice(0, 40) : "Company";
-        saveCoverLetter(
-          profile.firstName,
-          profile.lastName,
-          companyGuess,
-          trimmed,
-          profile.coverLetterSaveDir || undefined,
-        ).then(({ path }) => {
-          console.log(`[AutoApply] Cover letter saved → ${path}`);
-        }).catch((e) => {
-          console.warn("[AutoApply] Cover letter save failed:", e);
-        });
+          ? jobDescription.split(/[.]/)[0].replace(/^(about|at|join|work at)\s+/i, "").trim().slice(0, 40)
+: "Company";
+        if (profile.saveCoverLetterEnabled !== false) {
+          saveCoverLetter(
+            profile.firstName,
+            profile.lastName,
+            companyGuess,
+            trimmed,
+            profile.coverLetterSaveDir || undefined,
+          ).then(({ path }) => {
+            console.log(`[AutoApply] ✓ Cover letter saved → ${path}`);
+            appendCoverLetterLog({ status: "saved", company: companyGuess, path, message: `Saved → ${path}` });
+          }).catch((e) => {
+            const msg = String(e?.message ?? e);
+            console.warn(`[AutoApply] ✗ Cover letter save failed: ${msg}`);
+            appendCoverLetterLog({ status: "failed", company: companyGuess, message: msg });
+          });
+        } else {
+          console.log("[AutoApply] Cover letter save skipped (disabled in profile)");
+          appendCoverLetterLog({ status: "skipped", company: companyGuess, message: "Save disabled in profile settings" });
+        }
       }
     } catch (e) {
       console.warn("[AutoApply] Cover letter call failed:", e);

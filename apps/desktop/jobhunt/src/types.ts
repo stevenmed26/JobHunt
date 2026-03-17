@@ -57,6 +57,7 @@ export interface ApplicantProfile {
   resumeFileName: string;
   coverLetterFileName: string;
   coverLetterSaveDir: string; // directory where generated cover letters are saved
+  saveCoverLetterEnabled?: boolean; // whether to save generated cover letters to disk
 }
 
 export interface ApplicationDraft {
