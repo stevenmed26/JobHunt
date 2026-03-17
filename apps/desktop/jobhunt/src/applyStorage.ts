@@ -48,6 +48,13 @@ export function loadProfile(): ApplicantProfile {
 
 export function saveProfile(p: ApplicantProfile): void {
   localStorage.setItem(PROFILE_KEY, JSON.stringify(p));
+  // Sync to engine so the browser extension can read the profile.
+  // Fire-and-forget — if it fails the app still works normally.
+  fetch("http://127.0.0.1:38471/api/profile", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(p),
+  }).catch(() => null);
 }
 
 // Normalises a persisted draft to the current shape.

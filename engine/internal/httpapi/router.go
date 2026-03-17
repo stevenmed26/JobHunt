@@ -89,6 +89,13 @@ func NewMux(d Deps) *http.ServeMux {
 		http.MethodPost: llmh.ServeProxy,
 	}))
 
+	// Applicant profile — shared between Tauri app and browser extension
+	ph := ProfileHandler{DataDir: d.DataDir}
+	mux.HandleFunc("/api/profile", methodMux(map[string]http.HandlerFunc{
+		http.MethodGet:  ph.Get,
+		http.MethodPost: ph.Save,
+	}))
+
 	// Apply — two-phase: scrape form fields, then fill with exact selectors
 	ah := ApplyHandler{DB: d.DB, DataDir: d.DataDir}
 	mux.HandleFunc("/api/apply/scrape", methodMux(map[string]http.HandlerFunc{
