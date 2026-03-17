@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>JobHunt Auto Apply</title>
+  <style>
+    :root {
+      --bg:       #0f0f11;
+      --surface:  rgba(255,255,255,0.05);
+      --border:   rgba(255,255,255,0.10);
+      --text:     rgba(255,255,255,0.92);
+      --muted:    rgba(255,255,255,0.45);
+      --accent:   #0a84ff;
+      --green:    #1ed760;
+      --red:      #ff453a;
+      --yellow:   #ffd60a;
+      --gh:       #1d9e75;
+      --lv:       #0a84ff;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      width: 380px;
+      min-height: 200px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      font-size: 13px;
+    }
+
+    /* ── Header ── */
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 14px 16px 12px;
+      border-bottom: 1px solid var(--border);
+    }
+    .logo {
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      color: var(--text);
+    }
+    .logo span { color: var(--accent); }
+    .ats-badge {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 999px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: white;
+      margin-left: auto;
+    }
+    .ats-badge.greenhouse { background: var(--gh); }
+    .ats-badge.lever      { background: var(--lv); }
+    .ats-badge.unknown    { background: rgba(255,255,255,0.15); }
+
+    /* ── States ── */
+    .state {
+      padding: 20px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .state.hidden { display: none; }
+
+    .job-info .title {
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .job-info .company {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+
+    .btn {
+      appearance: none;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text);
+      padding: 9px 14px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 100ms;
+      width: 100%;
+      text-align: center;
+    }
+    .btn:hover    { background: rgba(255,255,255,0.09); }
+    .btn:disabled { opacity: 0.4; cursor: default; }
+    .btn.primary  { background: var(--accent); border-color: transparent; color: white; font-weight: 600; }
+    .btn.primary:hover { background: #1a8eff; }
+    .btn.green    { background: rgba(30,215,96,0.18); border-color: rgba(30,215,96,0.4); color: var(--green); font-weight: 600; }
+    .btn.green:hover { background: rgba(30,215,96,0.26); }
+
+    /* ── Progress ── */
+    .progress-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .spinner {
+      width: 14px; height: 14px;
+      border: 2px solid rgba(255,255,255,0.15);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      flex-shrink: 0;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Field list ── */
+    .fields-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 11px;
+      color: var(--muted);
+      padding: 0 2px;
+    }
+    .fields-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      max-height: 320px;
+      overflow-y: auto;
+    }
+    .fields-list::-webkit-scrollbar { width: 4px; }
+    .fields-list::-webkit-scrollbar-track { background: transparent; }
+    .fields-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }
+
+    .field-row {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 8px 10px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+    }
+    .field-label {
+      font-size: 11px;
+      color: var(--muted);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .field-label .required { color: var(--red); }
+    .field-type {
+      font-size: 9px;
+      padding: 1px 5px;
+      border-radius: 999px;
+      border: 1px solid rgba(255,255,255,0.15);
+      color: rgba(255,255,255,0.4);
+      margin-left: auto;
+    }
+    .field-input {
+      appearance: none;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.10);
+      color: var(--text);
+      padding: 6px 8px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-family: inherit;
+      width: 100%;
+      outline: none;
+      resize: vertical;
+    }
+    .field-input:focus { border-color: rgba(10,132,255,0.55); }
+    .field-select {
+      appearance: none;
+      background: #1c1c1e;
+      border: 1px solid rgba(255,255,255,0.10);
+      color: var(--text);
+      padding: 6px 8px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-family: inherit;
+      width: 100%;
+      outline: none;
+      color-scheme: dark;
+    }
+
+    /* ── Status bar ── */
+    .status-bar {
+      padding: 10px 16px;
+      border-top: 1px solid var(--border);
+      font-size: 11px;
+      color: var(--muted);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .status-dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .status-dot.green  { background: var(--green); }
+    .status-dot.red    { background: var(--red); }
+    .status-dot.yellow { background: var(--yellow); }
+    .status-dot.grey   { background: rgba(255,255,255,0.2); }
+
+    /* ── Error ── */
+    .error-box {
+      padding: 10px 12px;
+      background: rgba(255,69,58,0.10);
+      border: 1px solid rgba(255,69,58,0.25);
+      border-radius: 10px;
+      font-size: 12px;
+      color: rgba(255,80,70,0.9);
+      line-height: 1.5;
+    }
+
+    /* ── Not a job page ── */
+    .not-job {
+      padding: 24px 16px;
+      text-align: center;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+    .not-job .icon { font-size: 28px; margin-bottom: 8px; }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <div class="header">
+    <div class="logo">Job<span>Hunt</span></div>
+    <div id="atsBadge" class="ats-badge unknown" style="display:none"></div>
+  </div>
+
+  <!-- Not a job page -->
+  <div id="stateNotJob" class="not-job">
+    <div class="icon">🔍</div>
+    Navigate to a Greenhouse or Lever job posting to use Auto Apply.
+  </div>
+
+  <!-- Engine offline -->
+  <div id="stateOffline" class="state hidden">
+    <div class="error-box">
+      JobHunt engine is not running. Open the JobHunt desktop app first.
+    </div>
+  </div>
+
+  <!-- No profile -->
+  <div id="stateNoProfile" class="state hidden">
+    <div class="error-box">
+      No profile found. Open JobHunt, go to Auto Apply → Profile, fill in your details, and click Save Profile.
+    </div>
+  </div>
+
+  <!-- Ready to scrape -->
+  <div id="stateReady" class="state hidden">
+    <div class="job-info">
+      <div class="title" id="jobTitle">—</div>
+      <div class="company" id="jobCompany">—</div>
+    </div>
+    <button class="btn primary" id="btnScrape">⚡ Scrape &amp; Fill with Groq</button>
+  </div>
+
+  <!-- Working -->
+  <div id="stateWorking" class="state hidden">
+    <div class="progress-row">
+      <div class="spinner"></div>
+      <span id="workingMsg">Reading form fields…</span>
+    </div>
+  </div>
+
+  <!-- Review fields -->
+  <div id="stateReview" class="state hidden">
+    <div class="fields-header">
+      <span id="fieldCount">0 fields</span>
+      <span>Edit any value before filling</span>
+    </div>
+    <div class="fields-list" id="fieldsList"></div>
+    <button class="btn green" id="btnFill">Fill form ↗</button>
+    <button class="btn" id="btnRescrape">Re-scrape</button>
+  </div>
+
+  <!-- Done -->
+  <div id="stateSuccess" class="state hidden">
+    <div style="text-align:center; padding: 8px 0;">
+      <div style="font-size: 28px; margin-bottom: 8px;">✓</div>
+      <div style="font-size: 14px; font-weight: 600; margin-bottom: 4px;" id="successCount">Fields filled</div>
+      <div style="font-size: 12px; color: var(--muted);">Review the form, upload your resume, then submit.</div>
+    </div>
+    <button class="btn" id="btnFillAgain">Fill again</button>
+  </div>
+
+  <!-- Status bar -->
+  <div class="status-bar">
+    <div class="status-dot" id="statusDot" style="background: rgba(255,255,255,0.2)"></div>
+    <span id="statusMsg">Checking engine…</span>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

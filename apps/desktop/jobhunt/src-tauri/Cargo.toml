@@ -1,9 +1,9 @@
 [package]
 name        = "jobhunt"
-version     = "1.1.0"
+version     = "1.1.2"
 description = "Self-hosted desktop job hunting tool — scrapes ATS boards, scores listings, and auto-fills applications"
 authors     = ["Steven Mediterraneo"]
-edition     = "2021"
+edition     = "2026"
  
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
  

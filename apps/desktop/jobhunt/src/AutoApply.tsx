@@ -135,6 +135,13 @@ export default function AutoApply({ onBack }: { onBack: () => void }) {
           onScrapedFieldChange={queue.updateScrapedField}
           onFieldChange={queue.updateField}
           onApply={queue.applyDraft}
+          onSaveCoverLetter={async (jobId) => {
+            try {
+              await queue.saveCoverLetter(jobId);
+            } catch (e) {
+              console.warn("[AutoApply] Save cover letter failed:", e);
+            }
+          }}
           onScrapeAll={async () => {
             const toScrape = queue.queue
               .filter((d) => d.scrapedFields.length === 0 && d.status !== "scraping")

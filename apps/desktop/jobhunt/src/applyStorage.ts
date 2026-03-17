@@ -15,19 +15,29 @@ export function emptyProfile(): ApplicantProfile {
     portfolioURL: "",
     githubURL: "",
     location: "",
+    city: "",
+    state: "",
+    country: "United States",
     workAuth: "us_citizen",
     requiresSponsorship: false,
+    authorizedToWork: true,
     yearsExperience: "",
     currentTitle: "",
     desiredSalary: "",
+    noticePeriod: "",
+    previouslyEmployed: false,
+    employmentRestrictions: "",
     gender: "prefer_not",
     race: "prefer_not",
     veteranStatus: "prefer_not",
     disabilityStatus: "prefer_not",
+    sexualOrientation: "prefer_not",
+    transgenderStatus: "prefer_not",
     resumeText: "",
     coverLetterText: "",
     resumeFileName: "",
     coverLetterFileName: "",
+    coverLetterSaveDir: "",
   };
 }
 
@@ -41,6 +51,13 @@ export function loadProfile(): ApplicantProfile {
 
 export function saveProfile(p: ApplicantProfile): void {
   localStorage.setItem(PROFILE_KEY, JSON.stringify(p));
+  // Sync to engine so the browser extension can read the profile.
+  // Fire-and-forget — if it fails the app still works normally.
+  fetch("http://127.0.0.1:38471/api/profile", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(p),
+  }).catch(() => null);
 }
 
 // Normalises a persisted draft to the current shape.
@@ -57,6 +74,7 @@ export function migrateDraft(d: any): ApplicationDraft {
     status:        d.status        ?? "pending",
     fields:        Array.isArray(d.fields)        ? d.fields        : [],
     scrapedFields: Array.isArray(d.scrapedFields) ? d.scrapedFields : [],
+    generatedCoverLetter: typeof d.generatedCoverLetter === "string" ? d.generatedCoverLetter : "",
     errorMsg:      d.errorMsg,
     applying:      d.applying      ?? false,
   };
@@ -123,6 +141,8 @@ export function profileToFields(
       f("race",                "Race / ethnicity (EEO)", profile.race,                               false),
       f("veteran_status",      "Veteran status",         profile.veteranStatus,                      false),
       f("disability_status",   "Disability status",      profile.disabilityStatus,                   false),
+      f("sexual_orientation",  "Sexual orientation",     profile.sexualOrientation,                  false),
+      f("transgender_status",  "Transgender status",     profile.transgenderStatus,                  false),
     );
   }
 

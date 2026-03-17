@@ -88,6 +88,9 @@ func (h ApplyHandler) Scrape(w http.ResponseWriter, r *http.Request) {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Dir = filepath.Dir(fillerScript)
+	// NODE_PATH ensures require('playwright') resolves from the filler's own
+	// node_modules even when Node is invoked from a different working directory.
+	cmd.Env = append(os.Environ(), "NODE_PATH="+filepath.Join(filepath.Dir(fillerScript), "node_modules"))
 
 	done := make(chan error, 1)
 	if err := cmd.Start(); err != nil {
@@ -197,6 +200,7 @@ func (h ApplyHandler) Fill(w http.ResponseWriter, r *http.Request) {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Dir = filepath.Dir(fillerScript)
+	cmd.Env = append(os.Environ(), "NODE_PATH="+filepath.Join(filepath.Dir(fillerScript), "node_modules"))
 
 	if err := cmd.Start(); err != nil {
 		_ = os.Remove(jobFilePath)
@@ -239,11 +243,12 @@ func findFillerScript() (string, error) {
 	dir := filepath.Dir(exe)
 
 	candidates := []string{
-		filepath.Join(dir, "filler", "filler.js"),
-		filepath.Join(dir, "..", "filler", "filler.js"),
-		filepath.Join(dir, "..", "..", "filler", "filler.js"),
-		filepath.Join(dir, "..", "resources", "filler", "filler.js"),
-		filepath.Join(dir, "filler.js"),
+		filepath.Join(dir, "filler", "filler.js"),                         // dev: staged alongside engine binary
+		filepath.Join(dir, "..", "filler", "filler.js"),                   // Tauri bundle: resources/filler/
+		filepath.Join(dir, "..", "..", "filler", "filler.js"),             // Tauri macOS .app layout
+		filepath.Join(dir, "..", "resources", "filler", "filler.js"),      // Tauri alternate resource path
+		filepath.Join(dir, "..", "..", "..", "..", "filler", "filler.js"), // dev: repo root /filler/ (engine runs from engine/bin/)
+		filepath.Join(dir, "filler.js"),                                   // flat fallback
 	}
 	for _, c := range candidates {
 		if _, err := os.Stat(c); err == nil {
