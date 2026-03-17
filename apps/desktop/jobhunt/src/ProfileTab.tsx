@@ -395,6 +395,28 @@ export function ProfileTab({
             profile={profile} onChange={updateProfile}
           />
         </TwoCol>
+        <TwoCol>
+          <SelectField label="Sexual orientation" fieldKey="sexualOrientation"
+            options={[
+              { value: "straight",       label: "Straight / Heterosexual" },
+              { value: "gay_or_lesbian", label: "Gay or Lesbian" },
+              { value: "bisexual",       label: "Bisexual" },
+              { value: "asexual",        label: "Asexual" },
+              { value: "queer",          label: "Queer" },
+              { value: "other",          label: "Other" },
+              { value: "prefer_not",     label: "Prefer not to say" },
+            ]}
+            profile={profile} onChange={updateProfile}
+          />
+          <SelectField label="Transgender status" fieldKey="transgenderStatus"
+            options={[
+              { value: "yes",        label: "Yes" },
+              { value: "no",         label: "No" },
+              { value: "prefer_not", label: "Prefer not to say" },
+            ]}
+            profile={profile} onChange={updateProfile}
+          />
+        </TwoCol>
       </div>
 
       {/* ── Documents ── */}

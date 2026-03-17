@@ -11,6 +11,7 @@ export function QueueTab({
   onRemove,
   onScrapedFieldChange,
   onApply,
+  onSaveCoverLetter,
   onScrapeAll,
 }: {
   queue: ApplicationDraft[];
@@ -21,6 +22,7 @@ export function QueueTab({
   onScrapedFieldChange: (jobId: number, idx: number, val: string) => void;
   onFieldChange: (jobId: number, key: string, val: string) => void;
   onApply: (jobId: number) => void;
+  onSaveCoverLetter: (jobId: number) => void | Promise<void>;
   onScrapeAll: () => void;
 }) {
   const unscrapeCount = queue.filter(
@@ -87,6 +89,7 @@ export function QueueTab({
               onRemove={() => onRemove(draft.jobId)}
               onScrapedFieldChange={(idx, val) => onScrapedFieldChange(draft.jobId, idx, val)}
               onApply={() => onApply(draft.jobId)}
+              onSaveCoverLetter={() => onSaveCoverLetter(draft.jobId)}
             />
           ))}
         </div>

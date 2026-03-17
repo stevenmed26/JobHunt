@@ -2,6 +2,17 @@ import { normalizeConfig } from "./configNormalize";
 
 export const ENGINE_BASE = "http://127.0.0.1:38471";
 
+
+function apiLog(step: string, payload?: unknown) {
+  const ts = new Date().toISOString();
+  if (payload === undefined) {
+    console.log(`[JobHunt:api] ${ts} ${step}`);
+    return;
+  }
+  console.log(`[JobHunt:api] ${ts} ${step}`, payload);
+}
+
+
 export async function getJobs(qs?: string) {
   const r = await fetch(qs ? `${ENGINE_BASE}/jobs?${qs}` : "/jobs");
   if (!r.ok) throw new Error(await r.text());
@@ -203,16 +214,41 @@ export interface ScrapedField {
 
 // Phase 1: scrape the form fields from the live URL
 export async function scrapeForm(jobId: number, url: string, atsType: string): Promise<ScrapedField[]> {
+  apiLog("scrapeForm.request", { jobId, url, atsType });
+  const startedAt = performance.now();
+
   const res = await fetch(`${ENGINE_BASE}/api/apply/scrape`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ jobId, url, atsType }),
   });
+
   if (!res.ok) {
     const text = await res.text();
+    apiLog("scrapeForm.error", { jobId, status: res.status, body: text });
     throw new Error(text || `Scrape error: ${res.status}`);
   }
+
   const data = await res.json();
+  apiLog("scrapeForm.response", {
+    jobId,
+    elapsedMs: Math.round(performance.now() - startedAt),
+    fieldCount: Array.isArray(data.fields) ? data.fields.length : 0,
+    coverFields: Array.isArray(data.fields)
+      ? data.fields
+          .filter((f: ScrapedField) =>
+            (f.label || "").toLowerCase().includes("cover") ||
+            (f.label || "").toLowerCase().includes("letter") ||
+            f.selector === "#cover_letter_text" ||
+            f.selector === "#cover_letter"
+          )
+          .map((f: ScrapedField) => ({
+            label: f.label,
+            selector: f.selector,
+            type: f.type,
+          }))
+      : [],
+  });
   return data.fields as ScrapedField[];
 }
 
@@ -224,16 +260,45 @@ export interface FillRequest {
 }
 
 export async function fillForm(req: FillRequest): Promise<{ ok: boolean; pid?: number }> {
+  apiLog("fillForm.request", {
+    jobId: req.jobId,
+    url: req.url,
+    fieldCount: req.fields.length,
+    coverFields: req.fields
+      .filter((f) =>
+        (f.label || "").toLowerCase().includes("cover") ||
+        (f.label || "").toLowerCase().includes("letter") ||
+        f.selector === "#cover_letter_text" ||
+        f.selector === "#cover_letter"
+      )
+      .map((f) => ({
+        label: f.label,
+        selector: f.selector,
+        valueLength: f.value?.length || 0,
+        type: f.type,
+      })),
+  });
+
+  const startedAt = performance.now();
   const res = await fetch(`${ENGINE_BASE}/api/apply/fill`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(req),
   });
+
   if (!res.ok) {
     const text = await res.text();
+    apiLog("fillForm.error", { jobId: req.jobId, status: res.status, body: text });
     throw new Error(text || `Fill error: ${res.status}`);
   }
-  return res.json();
+
+  const data = await res.json();
+  apiLog("fillForm.response", {
+    jobId: req.jobId,
+    elapsedMs: Math.round(performance.now() - startedAt),
+    data,
+  });
+  return data;
 }
 
 // ─── Company search ───────────────────────────────────────────────────────────
@@ -287,11 +352,37 @@ export async function saveCoverLetter(
   text: string,
   saveDir?: string,
 ): Promise<{ ok: boolean; path: string }> {
+  apiLog("saveCoverLetter.request", {
+    firstName,
+    lastName,
+    companyName,
+    saveDir: saveDir || "(default)",
+    textLength: text.length,
+    preview: text.slice(0, 120),
+  });
+
+  const startedAt = performance.now();
   const res = await fetch(`${ENGINE_BASE}/api/cover-letter/save`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ firstName, lastName, companyName, content: text, saveDir }),
   });
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
+
+  if (!res.ok) {
+    const body = await res.text();
+    apiLog("saveCoverLetter.error", {
+      companyName,
+      status: res.status,
+      body,
+    });
+    throw new Error(body);
+  }
+
+  const data = await res.json();
+  apiLog("saveCoverLetter.response", {
+    companyName,
+    elapsedMs: Math.round(performance.now() - startedAt),
+    path: data.path,
+  });
+  return data;
 }

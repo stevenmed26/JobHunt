@@ -9,6 +9,56 @@
 
 const ENGINE = 'http://127.0.0.1:38471';
 
+const COVER_DEBUG_PREFIX = '[JobHunt:cover]';
+
+function coverLog(step, payload) {
+  const ts = new Date().toISOString();
+  if (payload === undefined) {
+    console.log(`${COVER_DEBUG_PREFIX} ${ts} ${step}`);
+    return;
+  }
+  try {
+    console.log(`${COVER_DEBUG_PREFIX} ${ts} ${step}`, payload);
+  } catch {
+    console.log(`${COVER_DEBUG_PREFIX} ${ts} ${step} ${String(payload)}`);
+  }
+}
+
+function summarizeEl(el) {
+  if (!el) return null;
+  const text = (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 140);
+  return {
+    tag: el.tagName?.toLowerCase?.() || '',
+    id: el.id || '',
+    name: el.getAttribute?.('name') || '',
+    type: el.getAttribute?.('type') || '',
+    placeholder: el.getAttribute?.('placeholder') || '',
+    role: el.getAttribute?.('role') || '',
+    className: typeof el.className === 'string' ? el.className.slice(0, 160) : '',
+    ariaLabel: el.getAttribute?.('aria-label') || '',
+    visible: isVisible(el),
+    selector: getSelector(el),
+    text,
+  };
+}
+
+function dumpVisibleTextareas() {
+  return Array.from(document.querySelectorAll('textarea')).map(el => summarizeEl(el));
+}
+
+function dumpEnterManualButtons() {
+  return Array.from(document.querySelectorAll('button, a'))
+    .filter(el => (el.textContent || '').trim() === 'Enter manually')
+    .map(el => {
+      const container = el.closest('section, li, div, fieldset, form');
+      return {
+        ...summarizeEl(el),
+        containerText: (container?.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 220),
+      };
+    });
+}
+
+
 // ─── ATS detection ────────────────────────────────────────────────────────────
 
 function detectATS() {
@@ -94,12 +144,22 @@ function getLabel(el) {
 }
 
 function scrapeFields() {
+  const enterButtonsBefore = dumpEnterManualButtons();
+  if (enterButtonsBefore.length > 0) {
+    coverLog('scrape.enterManually.before', enterButtonsBefore);
+  }
+
   // Click "Enter manually" buttons to expose textareas before scraping
   document.querySelectorAll('button, a').forEach(btn => {
     if (btn.textContent?.trim() === 'Enter manually' && isVisible(btn)) {
       btn.click();
     }
   });
+
+  const textareasAfterClick = dumpVisibleTextareas();
+  if (textareasAfterClick.length > 0) {
+    coverLog('scrape.textareas.afterEnterManual', textareasAfterClick);
+  }
 
   const results = [];
   const seen = new Set();
@@ -164,7 +224,19 @@ function scrapeFields() {
     results.push({ selector, label, type: 'react-select', required, options: [], value: '', isReactSelect: true });
   });
 
-  return results.filter(f => f.label.length < 300);
+  const finalFields = results.filter(f => f.label.length < 300);
+  const coverLike = finalFields.filter(f =>
+    (f.label || '').toLowerCase().includes('cover') ||
+    (f.label || '').toLowerCase().includes('letter') ||
+    f.selector === '#cover_letter_text' ||
+    f.selector === '#cover_letter'
+  );
+  coverLog('scrape.summary', {
+    totalFields: finalFields.length,
+    coverLikeCount: coverLike.length,
+    coverLike,
+  });
+  return finalFields;
 }
 
 // Hydrate React select options by clicking each one
@@ -202,19 +274,76 @@ function fillTextEl(el, value) {
   el.dispatchEvent(new Event('change', { bubbles: true }));
 }
 
-// Wait for an element to become visible, polling up to maxMs
-async function waitForVisible(selector, maxMs = 2000) {
+// Wait for an element matching any of the selectors to become visible.
+// Polls all selectors in parallel every 80ms — first match wins.
+// Also watches for any newly-appeared textarea as a last resort.
+async function waitForAnyVisible(selectors, maxMs = 2500, before = null) {
   const start = Date.now();
+  const beforeSet = before || new Set();
+  let lastSnapshotLog = 0;
+
+  coverLog('wait.start', {
+    selectors,
+    maxMs,
+    beforeTextareaCount: beforeSet.size,
+  });
+
   while (Date.now() - start < maxMs) {
-    const el = document.querySelector(selector);
-    if (el && isVisible(el)) return el;
+    for (const sel of selectors) {
+      try {
+        const el = document.querySelector(sel);
+        if (el && isVisible(el)) {
+          coverLog('wait.match.selector', { selector: sel, element: summarizeEl(el) });
+          return el;
+        }
+      } catch (err) {
+        coverLog('wait.selector.error', { selector: sel, message: String(err?.message || err) });
+      }
+    }
+
+    for (const el of document.querySelectorAll('textarea')) {
+      if (!beforeSet.has(el) && isVisible(el)) {
+        coverLog('wait.match.newTextarea', summarizeEl(el));
+        return el;
+      }
+    }
+
+    if (Date.now() - lastSnapshotLog > 500) {
+      lastSnapshotLog = Date.now();
+      coverLog('wait.poll', {
+        elapsedMs: Date.now() - start,
+        textareas: dumpVisibleTextareas(),
+      });
+    }
+
     await new Promise(r => setTimeout(r, 80));
   }
+
+  coverLog('wait.timeout', {
+    selectors,
+    textareas: dumpVisibleTextareas(),
+  });
   return null;
 }
 
 async function injectFields(filledFields) {
   let filled = 0;
+  coverLog('inject.start', {
+    url: location.href,
+    totalFields: filledFields.length,
+    filledValueCount: filledFields.filter(f => !!f.value).length,
+    coverCandidates: filledFields.filter(f =>
+      (f.label || '').toLowerCase().includes('cover') ||
+      (f.label || '').toLowerCase().includes('letter') ||
+      f.selector === '#cover_letter_text' ||
+      f.selector === '#cover_letter'
+    ).map(f => ({
+      label: f.label,
+      selector: f.selector,
+      type: f.type,
+      valueLength: f.value?.length || 0,
+    })),
+  });
 
   // ── Cover letter: dedicated robust handler ──────────────────────────────────
   // Greenhouse hides the textarea behind "Enter manually". We must:
@@ -232,44 +361,101 @@ async function injectFields(filledFields) {
   );
 
   if (coverField?.value) {
-    // Find the cover letter section container — look for the heading text
+    coverLog('inject.coverField.found', {
+      label: coverField.label,
+      selector: coverField.selector,
+      type: coverField.type,
+      valueLength: coverField.value.length,
+      preview: coverField.value.slice(0, 120),
+    });
+
+    const beforeTextareas = new Set(Array.from(document.querySelectorAll('textarea')));
+    coverLog('inject.beforeClick', {
+      textareas: dumpVisibleTextareas(),
+      enterButtons: dumpEnterManualButtons(),
+    });
+
     const allBtns = Array.from(document.querySelectorAll('button, a'));
     const enterBtns = allBtns.filter(b => b.textContent?.trim() === 'Enter manually' && isVisible(b));
+    coverLog('inject.enterButtons.visible', enterBtns.map(btn => {
+      const container = btn.closest('section, .field, li, div, fieldset, form');
+      return {
+        button: summarizeEl(btn),
+        containerText: (container?.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 220),
+      };
+    }));
 
-    // Click the Enter manually button that's closest to a "Cover Letter" label
-    // If there are two (resume + cover letter), pick the right one
-    let clicked = false;
-    for (const btn of enterBtns) {
-      const container = btn.closest('section, .field, li, div');
-      const containerText = container?.textContent?.toLowerCase() || '';
-      if (containerText.includes('cover') || containerText.includes('letter') || enterBtns.length === 1) {
-        btn.click();
-        clicked = true;
-        break;
+    if (enterBtns.length > 0) {
+      let clicked = false;
+      for (const btn of enterBtns) {
+        const container = btn.closest('section, .field, li, div, fieldset, form');
+        const txt = container?.textContent?.toLowerCase() || '';
+        const shouldClick = txt.includes('cover') || txt.includes('letter') || enterBtns.length === 1;
+        coverLog('inject.enterButton.consider', {
+          button: summarizeEl(btn),
+          shouldClick,
+          containerText: txt.slice(0, 220),
+        });
+        if (shouldClick) {
+          btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+          coverLog('inject.enterButton.clicked', summarizeEl(btn));
+          clicked = true;
+          break;
+        }
       }
+      if (!clicked) {
+        enterBtns.forEach(b => b.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })));
+        coverLog('inject.enterButton.clickedFallbackAll', enterBtns.map(summarizeEl));
+      }
+    } else {
+      coverLog('inject.enterButtons.noneVisible');
     }
-    // If we couldn't identify which button, click all of them
-    if (!clicked) enterBtns.forEach(b => b.click());
 
-    // Wait for the textarea to appear — poll instead of fixed delay
+    await new Promise(r => setTimeout(r, 500));
+    coverLog('inject.afterClick', {
+      textareas: dumpVisibleTextareas(),
+      enterButtons: dumpEnterManualButtons(),
+    });
+
     const coverSelectors = [
       coverField.selector,
       '#cover_letter_text',
       '#cover_letter',
       'textarea[name*="cover" i]',
       'textarea[placeholder*="cover" i]',
+      'textarea[placeholder*="letter" i]',
+      'textarea[id*="cover" i]',
+      'textarea[aria-label*="cover" i]',
+      'textarea',
     ];
 
-    let coverEl = null;
-    for (const sel of coverSelectors) {
-      coverEl = await waitForVisible(sel, 1500);
-      if (coverEl) break;
-    }
-
+    const coverEl = await waitForAnyVisible(coverSelectors, 5000, beforeTextareas);
     if (coverEl) {
+      coverLog('inject.coverEl.found', summarizeEl(coverEl));
+      coverEl.focus();
       fillTextEl(coverEl, coverField.value);
+      coverEl.dispatchEvent(new Event('blur', { bubbles: true }));
       filled++;
+      coverLog('inject.coverEl.filled', {
+        finalValueLength: coverEl.value?.length || 0,
+        matchesExpected: (coverEl.value || '') === coverField.value,
+        preview: (coverEl.value || '').slice(0, 120),
+      });
+    } else {
+      coverLog('inject.coverEl.notFound', {
+        coverSelectors,
+        textareas: dumpVisibleTextareas(),
+        allCoverish: Array.from(document.querySelectorAll('[id*="cover" i], [name*="cover" i], [class*="cover" i], textarea'))
+          .slice(0, 20)
+          .map(summarizeEl),
+      });
     }
+  } else if (filledFields.find(f => (f.label || '').toLowerCase().includes('cover'))) {
+    coverLog('inject.coverField.missingValue', filledFields
+      .filter(f => (f.label || '').toLowerCase().includes('cover') || (f.label || '').toLowerCase().includes('letter'))
+      .map(f => ({ label: f.label, selector: f.selector, valueLength: f.value?.length || 0 })));
+  } else {
+    coverLog('inject.coverField.notPresent');
   }
 
   // ── All other fields ────────────────────────────────────────────────────────
@@ -321,6 +507,7 @@ async function injectFields(filledFields) {
     } catch {}
   }
 
+  coverLog('inject.finish', { filledCount: filled });
   return filled;
 }
 
@@ -431,8 +618,18 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
   if (msg.type === 'SCRAPE_FIELDS') {
     (async () => {
+      coverLog('message.SCRAPE_FIELDS.start', { url: location.href });
       let fields = scrapeFields();
       fields = await hydrateReactSelectOptions(fields);
+      coverLog('message.SCRAPE_FIELDS.done', {
+        totalFields: fields.length,
+        coverFields: fields.filter(f =>
+          (f.label || '').toLowerCase().includes('cover') ||
+          (f.label || '').toLowerCase().includes('letter') ||
+          f.selector === '#cover_letter_text' ||
+          f.selector === '#cover_letter'
+        ),
+      });
       sendResponse({ fields });
     })();
     return true; // async
@@ -440,7 +637,17 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
   if (msg.type === 'INJECT_FIELDS') {
     (async () => {
+      coverLog('message.INJECT_FIELDS.start', {
+        totalFields: msg.fields?.length || 0,
+        coverFields: (msg.fields || []).filter(f =>
+          (f.label || '').toLowerCase().includes('cover') ||
+          (f.label || '').toLowerCase().includes('letter') ||
+          f.selector === '#cover_letter_text' ||
+          f.selector === '#cover_letter'
+        ).map(f => ({ label: f.label, selector: f.selector, valueLength: f.value?.length || 0 })),
+      });
       const count = await injectFields(msg.fields);
+      coverLog('message.INJECT_FIELDS.done', { filled: count });
       sendResponse({ filled: count });
     })();
     return true; // async

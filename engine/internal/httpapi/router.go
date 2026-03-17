@@ -89,6 +89,12 @@ func NewMux(d Deps) *http.ServeMux {
 		http.MethodPost: llmh.ServeProxy,
 	}))
 
+	// Extension log — forwards console messages to engine stdout (cmd window)
+	lgh := LogHandler{}
+	mux.HandleFunc("/api/log", methodMux(map[string]http.HandlerFunc{
+		http.MethodPost: lgh.Log,
+	}))
+
 	// Cover letter save
 	clh := CoverLetterHandler{}
 	mux.HandleFunc("/api/cover-letter/save", methodMux(map[string]http.HandlerFunc{

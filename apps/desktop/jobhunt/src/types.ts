@@ -15,6 +15,15 @@ export type Race =
   | "prefer_not";
 export type VeteranStatus = "yes" | "no" | "prefer_not";
 export type DisabilityStatus = "yes" | "no" | "prefer_not";
+export type SexualOrientation =
+  | "straight"
+  | "gay_or_lesbian"
+  | "bisexual"
+  | "asexual"
+  | "queer"
+  | "other"
+  | "prefer_not";
+export type TransgenderStatus = "yes" | "no" | "prefer_not";
 
 export interface ApplicantProfile {
   // Identity
@@ -50,6 +59,8 @@ export interface ApplicantProfile {
   race: Race;
   veteranStatus: VeteranStatus;
   disabilityStatus: DisabilityStatus;
+  sexualOrientation: SexualOrientation;
+  transgenderStatus: TransgenderStatus;
 
   // Docs
   resumeText: string;
@@ -72,6 +83,7 @@ export interface ApplicationDraft {
   status: "pending" | "scraping" | "scraped" | "filling" | "ready" | "submitted" | "error";
   fields: ApplicationField[];
   scrapedFields: ScrapedField[];
+  generatedCoverLetter?: string;
   errorMsg?: string;
   applying?: boolean;
 }

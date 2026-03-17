@@ -4,6 +4,25 @@ import { callLLM, getJobDescription, saveCoverLetter, ScrapedField } from "./api
 import { appendCoverLetterLog } from "./ProfileTab";
 import type { ApplicantProfile, ApplicationDraft, ApplicationField } from "./types";
 
+function llmLog(step: string, payload?: unknown) {
+  const ts = new Date().toISOString();
+  if (payload === undefined) {
+    console.log(`[JobHunt:llm] ${ts} ${step}`);
+    return;
+  }
+  console.log(`[JobHunt:llm] ${ts} ${step}`, payload);
+}
+
+function isCoverField(field: ScrapedField) {
+  return (
+    (field.label || "").toLowerCase().includes("cover") ||
+    (field.label || "").toLowerCase().includes("letter") ||
+    field.selector === "#cover_letter_text" ||
+    field.selector === "#cover_letter"
+  );
+}
+
+
 export async function fetchJobDescription(jobId: number): Promise<string> {
   try {
     return await getJobDescription(jobId);
@@ -91,19 +110,29 @@ export async function fillScrapedFieldsWithGroq(
   profile: ApplicantProfile,
   jobDescription: string,
 ): Promise<ScrapedField[]> {
-  if (fields.length === 0) return fields;
+  if (fields.length === 0) {
+    llmLog("fillScrapedFieldsWithGroq.empty");
+    return fields;
+  }
 
-  // Detect cover letter fields by label OR by being a textarea with selector
-  // matching known cover letter IDs — catches cases where the label is "Enter manually"
-  // (the Greenhouse button text) instead of "Cover Letter".
-  const isCoverLetter = (f: ScrapedField) =>
-    f.label.toLowerCase().includes("cover") ||
-    f.label.toLowerCase().includes("letter") ||
-    f.selector === "#cover_letter_text" ||
-    f.selector === "#cover_letter";
+  const shortFields  = fields.filter((f) => f.type !== "file" && !isCoverField(f));
+  const coverFields  = fields.filter((f) => f.type !== "file" && isCoverField(f));
 
-  const shortFields  = fields.filter((f) => f.type !== "file" && !isCoverLetter(f));
-  const coverFields  = fields.filter((f) => f.type !== "file" && isCoverLetter(f));
+  llmLog("fillScrapedFieldsWithGroq.start", {
+    totalFields: fields.length,
+    shortFieldCount: shortFields.length,
+    coverFieldCount: coverFields.length,
+    coverFields: coverFields.map((f) => ({
+      label: f.label,
+      selector: f.selector,
+      type: f.type,
+      required: f.required,
+      incomingValueLength: f.value?.length || 0,
+    })),
+    jobDescriptionLength: jobDescription.length,
+    saveCoverLetterEnabled: profile.saveCoverLetterEnabled !== false,
+    coverLetterSaveDir: profile.coverLetterSaveDir || "(default)",
+  });
 
   // Build a compact profile string reused in both passes
   const profileBlock = buildProfileBlock(profile);
@@ -149,16 +178,33 @@ ${(jobDescription || "(not available)").slice(0, 800)}
 FORM FIELDS:
 ${JSON.stringify(fieldSummary, null, 2)}`;
 
+    llmLog("shortFields.request", {
+      fieldCount: shortFields.length,
+      messageLength: userMessage.length,
+    });
+
     const text = await callLLM({
       system:     systemPrompt,
       messages:   [{ role: "user", content: userMessage }],
       max_tokens: 1500,
     });
 
+    llmLog("shortFields.response", {
+      textLength: text.length,
+      preview: text.slice(0, 200),
+    });
+
     try {
       shortAnswers = JSON.parse(text.replace(/```json|```/g, "").trim());
-    } catch {
+      llmLog("shortFields.parsed", {
+        answerCount: shortAnswers.length,
+      });
+    } catch (err) {
       console.warn("[AutoApply] Pass 1 parse failed — short fields will be empty");
+      llmLog("shortFields.parseError", {
+        message: String((err as Error)?.message || err),
+        rawPreview: text.slice(0, 400),
+      });
     }
   }
 
@@ -168,6 +214,13 @@ ${JSON.stringify(fieldSummary, null, 2)}`;
   let coverAnswers: { selector: string; value: string }[] = [];
 
   if (coverFields.length > 0) {
+    llmLog("coverLetter.request.start", {
+      coverFields: coverFields.map((f) => ({
+        label: f.label,
+        selector: f.selector,
+        type: f.type,
+      })),
+    });
     const systemPrompt = `You are writing a cover letter for a job application.
 Write ONLY the cover letter text — plain text, no JSON, no markdown, no explanation, nothing else.
 3 short paragraphs separated by a blank line:
@@ -194,8 +247,17 @@ ${jobDescription || "(not available)"}`;
         max_tokens: 600,
       });
 
+      llmLog("coverLetter.response.raw", {
+        textLength: coverText.length,
+        preview: coverText.slice(0, 220),
+      });
+
       const trimmed = coverText.trim();
       if (trimmed) {
+        llmLog("coverLetter.response.trimmed", {
+          textLength: trimmed.length,
+          preview: trimmed.slice(0, 220),
+        });
         coverAnswers = coverFields.map((f) => ({
           selector: f.selector,
           value:    trimmed,
@@ -207,6 +269,12 @@ ${jobDescription || "(not available)"}`;
           ? jobDescription.split(/[.]/)[0].replace(/^(about|at|join|work at)\s+/i, "").trim().slice(0, 40)
 : "Company";
         if (profile.saveCoverLetterEnabled !== false) {
+          llmLog("coverLetter.save.start", {
+            companyGuess,
+            saveDir: profile.coverLetterSaveDir || "(default)",
+            textLength: trimmed.length,
+          });
+
           saveCoverLetter(
             profile.firstName,
             profile.lastName,
@@ -215,26 +283,39 @@ ${jobDescription || "(not available)"}`;
             profile.coverLetterSaveDir || undefined,
           ).then(({ path }) => {
             console.log(`[AutoApply] ✓ Cover letter saved → ${path}`);
+            llmLog("coverLetter.save.success", { companyGuess, path });
             appendCoverLetterLog({ status: "saved", company: companyGuess, path, message: `Saved → ${path}` });
           }).catch((e) => {
             const msg = String(e?.message ?? e);
             console.warn(`[AutoApply] ✗ Cover letter save failed: ${msg}`);
+            llmLog("coverLetter.save.failed", { companyGuess, message: msg });
             appendCoverLetterLog({ status: "failed", company: companyGuess, message: msg });
           });
         } else {
           console.log("[AutoApply] Cover letter save skipped (disabled in profile)");
+          llmLog("coverLetter.save.skipped", { reason: "disabled in profile settings", companyGuess });
           appendCoverLetterLog({ status: "skipped", company: companyGuess, message: "Save disabled in profile settings" });
         }
+      } else {
+        llmLog("coverLetter.response.empty");
       }
     } catch (e) {
       console.warn("[AutoApply] Cover letter call failed:", e);
+      llmLog("coverLetter.request.failed", { message: String((e as Error)?.message || e) });
     }
+  } else {
+    llmLog("coverLetter.request.skipped", { reason: "no cover fields detected" });
   }
 
   const allAnswers = [...shortAnswers, ...coverAnswers];
+  llmLog("fillScrapedFieldsWithGroq.merge", {
+    shortAnswerCount: shortAnswers.length,
+    coverAnswerCount: coverAnswers.length,
+    totalAnswerCount: allAnswers.length,
+  });
 
   // ── Merge answers back into fields ────────────────────────────────────────
-  return fields.map((f) => {
+  const merged = fields.map((f) => {
     if (f.type === "file") return f;
     const answer = allAnswers.find((a) => a.selector === f.selector);
     if (!answer?.value) return f;
@@ -262,6 +343,17 @@ ${jobDescription || "(not available)"}`;
 
     return { ...f, value: answer.value };
   });
+
+  llmLog("fillScrapedFieldsWithGroq.done", {
+    totalFields: merged.length,
+    populatedCoverFields: merged.filter((f) => isCoverField(f)).map((f) => ({
+      label: f.label,
+      selector: f.selector,
+      valueLength: f.value?.length || 0,
+    })),
+  });
+
+  return merged;
 }
 
 // ── Shared profile block ──────────────────────────────────────────────────────

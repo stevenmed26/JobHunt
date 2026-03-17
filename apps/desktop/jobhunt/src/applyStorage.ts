@@ -31,6 +31,8 @@ export function emptyProfile(): ApplicantProfile {
     race: "prefer_not",
     veteranStatus: "prefer_not",
     disabilityStatus: "prefer_not",
+    sexualOrientation: "prefer_not",
+    transgenderStatus: "prefer_not",
     resumeText: "",
     coverLetterText: "",
     resumeFileName: "",
@@ -72,6 +74,7 @@ export function migrateDraft(d: any): ApplicationDraft {
     status:        d.status        ?? "pending",
     fields:        Array.isArray(d.fields)        ? d.fields        : [],
     scrapedFields: Array.isArray(d.scrapedFields) ? d.scrapedFields : [],
+    generatedCoverLetter: typeof d.generatedCoverLetter === "string" ? d.generatedCoverLetter : "",
     errorMsg:      d.errorMsg,
     applying:      d.applying      ?? false,
   };
@@ -138,6 +141,8 @@ export function profileToFields(
       f("race",                "Race / ethnicity (EEO)", profile.race,                               false),
       f("veteran_status",      "Veteran status",         profile.veteranStatus,                      false),
       f("disability_status",   "Disability status",      profile.disabilityStatus,                   false),
+      f("sexual_orientation",  "Sexual orientation",     profile.sexualOrientation,                  false),
+      f("transgender_status",  "Transgender status",     profile.transgenderStatus,                  false),
     );
   }
 

@@ -58,6 +58,62 @@ function getArg(flag) {
 
 function log(msg) { console.log(`[filler:${mode}] ${msg}`); }
 
+function short(str, n = 160) {
+  return String(str ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
+}
+
+async function snapshotCoverDom(page, tag = 'snapshot') {
+  try {
+    const data = await page.evaluate((tagName) => {
+      function isVisible(el) {
+        if (!el) return false;
+        const r = el.getBoundingClientRect();
+        if (r.width === 0 && r.height === 0) return false;
+        const style = window.getComputedStyle(el);
+        return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+      }
+
+      function summarize(el) {
+        if (!el) return null;
+        return {
+          tag: el.tagName?.toLowerCase?.() || '',
+          id: el.id || '',
+          name: el.getAttribute?.('name') || '',
+          placeholder: el.getAttribute?.('placeholder') || '',
+          role: el.getAttribute?.('role') || '',
+          className: typeof el.className === 'string' ? el.className.slice(0, 160) : '',
+          text: (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 200),
+          visible: isVisible(el),
+        };
+      }
+
+      return {
+        tag: tagName,
+        url: location.href,
+        title: document.title,
+        textareas: Array.from(document.querySelectorAll('textarea')).map(summarize),
+        enterManualButtons: Array.from(document.querySelectorAll('button, a'))
+          .filter(el => (el.textContent || '').trim() === 'Enter manually')
+          .map(el => {
+            const container = el.closest('section, li, div, fieldset, form');
+            return {
+              button: summarize(el),
+              containerText: (container?.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 220),
+            };
+          }),
+        coverishNodes: Array.from(document.querySelectorAll('[id*="cover" i], [name*="cover" i], [class*="cover" i], [placeholder*="cover" i]'))
+          .slice(0, 20)
+          .map(summarize),
+      };
+    }, tag);
+    log(`DEBUG: cover DOM ${tag}: ${JSON.stringify(data)}`);
+  } catch (e) {
+    log(`WARN: snapshotCoverDom(${tag}) failed: ${e.message}`);
+  }
+}
+
+
+
 // ─── SCRAPE MODE ──────────────────────────────────────────────────────────────
 
 async function runScrape() {
@@ -336,6 +392,12 @@ async function runFill() {
   const page    = await context.newPage();
 
   page.on('dialog', async d => { await d.dismiss().catch(() => null); });
+  page.on('console', msg => {
+    log(`PAGE CONSOLE [${msg.type()}]: ${msg.text()}`);
+  });
+  page.on('pageerror', err => {
+    log(`PAGE ERROR: ${err.message}`);
+  });
 
   try {
     await page.goto(job.url, { waitUntil: 'domcontentloaded', timeout: 30000 });
@@ -345,55 +407,70 @@ async function runFill() {
 
     // ── Pre-fill: handle Greenhouse special widgets before main loop ───────────
 
-    // Cover letter — verbose debug version
+    // Cover letter — extra verbose debug version
     const coverField = job.fields.find(f =>
       f.value &&
-      (f.label.toLowerCase().includes('cover') || f.label.toLowerCase().includes('letter'))
+      (
+        f.label.toLowerCase().includes('cover') ||
+        f.label.toLowerCase().includes('letter') ||
+        f.selector === '#cover_letter_text' ||
+        f.selector === '#cover_letter'
+      )
     );
 
     log(`DEBUG: cover field found: ${!!coverField}`);
     if (coverField) {
-      log(`DEBUG: cover label="${coverField.label}" selector="${coverField.selector}" value_len=${coverField.value?.length}`);
+      log(`DEBUG: cover label="${coverField.label}" selector="${coverField.selector}" type="${coverField.type}" value_len=${coverField.value?.length}`);
+      log(`DEBUG: cover preview="${short(coverField.value, 200)}"`);
     }
 
     if (coverField && coverField.value) {
       try {
-        // Step 1: dump all buttons on page to see what's available
-        const allBtns = await page.locator('button, a').all();
-        log(`DEBUG: total buttons/links on page: ${allBtns.length}`);
-        for (const btn of allBtns) {
-          const txt = (await btn.textContent().catch(() => '')).trim();
-          if (txt) log(`DEBUG: button text: "${txt}"`);
-        }
+        await snapshotCoverDom(page, 'before-cover-click');
 
-        // Step 2: click "Enter manually" buttons
         const enterBtns = await page.locator(
           'button:has-text("Enter manually"), a:has-text("Enter manually"), [data-source="paste"]'
         ).all();
+
         log(`DEBUG: "Enter manually" buttons found: ${enterBtns.length}`);
+
+        let clicked = false;
         for (const btn of enterBtns) {
           const vis = await btn.isVisible().catch(() => false);
-          log(`DEBUG: Enter manually button visible: ${vis}`);
-          if (vis) {
-            await btn.click();
-            await page.waitForTimeout(600);
-            log('cover letter: clicked Enter manually');
+          const txt = short(await btn.textContent().catch(() => ''));
+          const containerText = short(await btn.evaluate(el => {
+            const container = el.closest('section, li, div, fieldset, form');
+            return container?.textContent || '';
+          }).catch(() => ''));
+          log(`DEBUG: Enter manually candidate visible=${vis} text="${txt}" container="${containerText}"`);
+          if (!vis) continue;
+          const shouldClick = containerText.toLowerCase().includes('cover') || containerText.toLowerCase().includes('letter') || enterBtns.length === 1;
+          if (shouldClick) {
+            await btn.click({ force: true }).catch(async () => {
+              await btn.evaluate(el => el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })));
+            });
+            clicked = true;
+            log(`DEBUG: clicked Enter manually target text="${txt}"`);
+            break;
           }
         }
 
-        // Step 3: dump all textareas now visible
-        const allTAs = await page.locator('textarea').all();
-        log(`DEBUG: textareas on page after click: ${allTAs.length}`);
-        for (const ta of allTAs) {
-          const vis = await ta.isVisible().catch(() => false);
-          const name = await ta.getAttribute('name').catch(() => '');
-          const id   = await ta.getAttribute('id').catch(() => '');
-          const ph   = await ta.getAttribute('placeholder').catch(() => '');
-          log(`DEBUG: textarea id="${id}" name="${name}" placeholder="${ph}" visible=${vis}`);
+        if (!clicked && enterBtns.length > 0) {
+          log('DEBUG: no clearly cover-related Enter manually button found, clicking all as fallback');
+          for (const btn of enterBtns) {
+            const vis = await btn.isVisible().catch(() => false);
+            if (!vis) continue;
+            await btn.click({ force: true }).catch(async () => {
+              await btn.evaluate(el => el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })));
+            });
+          }
         }
 
-        // Step 4: try exact scraped selector
+        await page.waitForTimeout(900);
+        await snapshotCoverDom(page, 'after-cover-click');
+
         let coverLoc = null;
+
         if (coverField.selector) {
           const exact = page.locator(coverField.selector).first();
           const cnt = await exact.count();
@@ -402,52 +479,71 @@ async function runFill() {
           if (vis) coverLoc = exact;
         }
 
-        // Step 5: named fallbacks
         if (!coverLoc) {
           const fallbacks = [
-            'textarea[name*="cover" i]',
             '#cover_letter_text',
             '#cover_letter',
+            'textarea[name*="cover" i]',
+            'textarea[id*="cover" i]',
             'textarea[placeholder*="cover" i]',
             'textarea[placeholder*="letter" i]',
+            'textarea[aria-label*="cover" i]',
             'textarea[class*="cover" i]',
           ];
           for (const sel of fallbacks) {
             const l = page.locator(sel).first();
             const cnt = await l.count();
-            if (cnt > 0) {
-              const vis = await l.isVisible().catch(() => false);
-              log(`DEBUG: fallback "${sel}" count=${cnt} visible=${vis}`);
-              if (vis) { coverLoc = l; break; }
+            const vis = cnt > 0 && await l.isVisible().catch(() => false);
+            log(`DEBUG: fallback "${sel}" count=${cnt} visible=${vis}`);
+            if (vis) {
+              coverLoc = l;
+              break;
             }
           }
         }
 
-        // Step 6: any visible textarea as last resort
         if (!coverLoc) {
           const visTextareas = await page.locator('textarea:visible').all();
           log(`DEBUG: visible textareas for last resort: ${visTextareas.length}`);
           if (visTextareas.length > 0) {
             coverLoc = visTextareas[visTextareas.length - 1];
+            log('DEBUG: using last visible textarea as last resort');
           }
         }
 
         if (coverLoc) {
-          await coverLoc.fill(coverField.value);
-          log(`cover letter: filled ${coverField.value.substring(0, 60)}...`);
+          await coverLoc.focus().catch(() => null);
+          await coverLoc.evaluate((el, value) => {
+            const proto = el.tagName === 'TEXTAREA'
+              ? window.HTMLTextAreaElement.prototype
+              : window.HTMLInputElement.prototype;
+            const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+            if (setter) setter.call(el, value);
+            else el.value = value;
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+            el.dispatchEvent(new Event('blur', { bubbles: true }));
+          }, coverField.value);
+
+          const finalValue = await coverLoc.inputValue().catch(() => '');
+          log(`cover letter: filled final_len=${finalValue.length} exact_match=${finalValue === coverField.value}`);
+          log(`cover letter: final preview="${short(finalValue, 200)}"`);
         } else {
           log('WARN: cover letter textarea not found after all attempts');
-          // Dump full page HTML snippet around cover letter area for diagnosis
           const html = await page.evaluate(() => {
             const el = document.querySelector('[class*="cover"], [id*="cover"], [data-field*="cover"]');
-            return el ? el.outerHTML.substring(0, 500) : '(no cover element found)';
+            return el ? el.outerHTML.substring(0, 1200) : '(no cover element found)';
           });
           log(`DEBUG: cover area HTML: ${html}`);
+          await snapshotCoverDom(page, 'cover-not-found');
         }
       } catch (e) {
         log(`WARN: cover letter failed: ${e.message}
 ${e.stack}`);
+        await snapshotCoverDom(page, 'cover-exception').catch(() => null);
       }
+    } else {
+      log('DEBUG: no cover field with value was present in fill payload');
     }
 
     // ── Main field loop ────────────────────────────────────────────────────────
@@ -554,14 +650,27 @@ async function fillField(page, field) {
         }
       }
     }
-    await loc.fill(value);
-    log(`textarea: "${field.label}" -> "${value.substring(0, 60)}..."`);
+    await loc.focus().catch(() => null);
+    await loc.evaluate((el, nextValue) => {
+      const proto = el.tagName === 'TEXTAREA'
+        ? window.HTMLTextAreaElement.prototype
+        : window.HTMLInputElement.prototype;
+      const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+      if (setter) setter.call(el, nextValue);
+      else el.value = nextValue;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      el.dispatchEvent(new Event('blur', { bubbles: true }));
+    }, value);
+    const finalValue = await loc.inputValue().catch(() => '');
+    log(`textarea: "${field.label}" -> len=${finalValue.length} exact_match=${finalValue === value} preview="${short(finalValue, 80)}"`);
     return true;
   }
 
   // Standard text / email / tel / url inputs
   await loc.fill(value);
-  log(`input: "${field.label}" -> "${value.substring(0, 60)}"`);
+  const finalValue = await loc.inputValue().catch(() => '');
+  log(`input: "${field.label}" -> len=${finalValue.length} exact_match=${finalValue === value} preview="${short(finalValue, 80)}"`);
   return true;
 }
 
