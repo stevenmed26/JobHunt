@@ -1,15 +1,16 @@
 {
   "name": "jobhunt",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.1.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "engine:kill": "cmd /c \"taskkill /F /IM engine.exe 2>nul & taskkill /F /IM engine-x86_64-pc-windows-msvc.exe 2>nul\"",
-    "tauri:dev": "node scripts/dev-tauri.js",
+    "stage:tauri-assets": "node scripts/stage-tauri-assets.js",
+    "tauri:dev": "npm run stage:tauri-assets && node scripts/dev-tauri.js",
     "engine:build": "go -C ../../../engine build -o ../apps/desktop/jobhunt/src-tauri/bin/engine.exe ./cmd/engine",
-    "tauri:build": "npm run engine:build && tauri build"
+    "tauri:build": "npm run engine:build && npm run stage:tauri-assets && tauri build"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

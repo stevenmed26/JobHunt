@@ -6,6 +6,47 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.1.2] — 2026-03-17
+
+### Added
+
+**Browser Extension (Experimental)**
+- Chrome-compatible extension that can auto-fill job application forms directly from the browser without opening JobHunt first
+- Supports **Greenhouse** and **Lever** application forms
+- Extension scrapes the live form fields, sends them to the JobHunt engine for Groq completion, and injects answers back into the page
+- Cover letter generation handled through the same Groq pipeline used by the desktop Auto Apply system
+- Automatic company detection from ATS URLs (e.g. `job-boards.greenhouse.io/gitlab/...`)
+- Cover letters optionally saved to disk via the engine (`saveCoverLetterEnabled` setting)
+- Safe injection guards to prevent writing text into file upload inputs (`<input type="file">`)
+- Debug logging for scraping, AI prompting, cover letter generation, and injection steps
+
+**AI Prompting Improvements**
+- Two-pass Groq prompting for scraped forms:
+  - **Pass 1:** short fields (text, select, yes/no)
+  - **Pass 2:** long-form cover letter generation
+- Prevents JSON truncation caused by long cover letters exceeding token limits
+- Company name explicitly injected into cover letter prompts to prevent reuse of previous company names from resume templates
+- Extended demographic field mappings for ATS EEO questions:
+  - gender identity
+  - race / ethnicity
+  - veteran status
+  - disability status
+  - sexual orientation
+  - transgender status
+
+### Changed
+
+- Cover letter prompts now explicitly enforce the target company name and ignore historical company references in templates or resumes
+- Scraped form filling now prioritises textarea-based manual-entry widgets for cover letters instead of file upload fields
+- Extension injection pipeline now skips file inputs entirely to prevent browser security errors
+
+### Fixed
+
+- Extension crash when attempting to programmatically set the value of file upload inputs (`input[type=file]`)
+- Cover letter injection failing on Greenhouse forms when the hidden upload field was selected instead of the manual textarea
+- Groq prompt occasionally producing cover letters referencing the wrong company due to template contamination
+- Field merge logic dropping values when cover letter JSON responses exceeded token limits
+
 ## [1.1.0] — 2026-03-15
 
 ### Added

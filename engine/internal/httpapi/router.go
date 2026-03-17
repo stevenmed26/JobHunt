@@ -89,6 +89,25 @@ func NewMux(d Deps) *http.ServeMux {
 		http.MethodPost: llmh.ServeProxy,
 	}))
 
+	// Extension log — forwards console messages to engine stdout (cmd window)
+	lgh := LogHandler{}
+	mux.HandleFunc("/api/log", methodMux(map[string]http.HandlerFunc{
+		http.MethodPost: lgh.Log,
+	}))
+
+	// Cover letter save
+	clh := CoverLetterHandler{}
+	mux.HandleFunc("/api/cover-letter/save", methodMux(map[string]http.HandlerFunc{
+		http.MethodPost: clh.Save,
+	}))
+
+	// Applicant profile — shared between Tauri app and browser extension
+	ph := ProfileHandler{DataDir: d.DataDir}
+	mux.HandleFunc("/api/profile", methodMux(map[string]http.HandlerFunc{
+		http.MethodGet:  ph.Get,
+		http.MethodPost: ph.Save,
+	}))
+
 	// Apply — two-phase: scrape form fields, then fill with exact selectors
 	ah := ApplyHandler{DB: d.DB, DataDir: d.DataDir}
 	mux.HandleFunc("/api/apply/scrape", methodMux(map[string]http.HandlerFunc{

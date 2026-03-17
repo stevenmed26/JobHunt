@@ -15,8 +15,18 @@ export type Race =
   | "prefer_not";
 export type VeteranStatus = "yes" | "no" | "prefer_not";
 export type DisabilityStatus = "yes" | "no" | "prefer_not";
+export type SexualOrientation =
+  | "straight"
+  | "gay_or_lesbian"
+  | "bisexual"
+  | "asexual"
+  | "queer"
+  | "other"
+  | "prefer_not";
+export type TransgenderStatus = "yes" | "no" | "prefer_not";
 
 export interface ApplicantProfile {
+  // Identity
   firstName: string;
   lastName: string;
   email: string;
@@ -24,20 +34,41 @@ export interface ApplicantProfile {
   linkedinURL: string;
   portfolioURL: string;
   githubURL: string;
-  location: string;
+
+  // Location — stored split so Groq can answer country/state/city questions precisely
+  location: string;   // display string e.g. "Dallas, TX"
+  city: string;
+  state: string;
+  country: string;    // full country name e.g. "United States"
+
+  // Work
   workAuth: WorkAuth;
   requiresSponsorship: boolean;
+  authorizedToWork: boolean;   // authorized to work in current country (non-US)
   yearsExperience: string;
   currentTitle: string;
   desiredSalary: string;
+  noticePeriod: string;        // e.g. "2 weeks", "Immediately", "1 month"
+
+  // Common custom questions
+  previouslyEmployed: boolean;       // previously worked at / consulted for this company
+  employmentRestrictions: string;    // any employment agreements or post-employment restrictions
+
+  // EEO
   gender: Gender;
   race: Race;
   veteranStatus: VeteranStatus;
   disabilityStatus: DisabilityStatus;
+  sexualOrientation: SexualOrientation;
+  transgenderStatus: TransgenderStatus;
+
+  // Docs
   resumeText: string;
   coverLetterText: string;
   resumeFileName: string;
   coverLetterFileName: string;
+  coverLetterSaveDir: string; // directory where generated cover letters are saved
+  saveCoverLetterEnabled?: boolean; // whether to save generated cover letters to disk
 }
 
 export interface ApplicationDraft {
@@ -52,6 +83,7 @@ export interface ApplicationDraft {
   status: "pending" | "scraping" | "scraped" | "filling" | "ready" | "submitted" | "error";
   fields: ApplicationField[];
   scrapedFields: ScrapedField[];
+  generatedCoverLetter?: string;
   errorMsg?: string;
   applying?: boolean;
 }
