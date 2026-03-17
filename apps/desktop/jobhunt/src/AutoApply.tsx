@@ -137,7 +137,7 @@ export default function AutoApply({ onBack }: { onBack: () => void }) {
           onApply={queue.applyDraft}
           onSaveCoverLetter={async (jobId) => {
             try {
-              await queue.saveGeneratedCoverLetter(jobId);
+              await queue.saveCoverLetter(jobId);
             } catch (e) {
               console.warn("[AutoApply] Save cover letter failed:", e);
             }

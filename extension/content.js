@@ -86,19 +86,54 @@ function getJobTitle() {
   return document.title;
 }
 
+function prettifyCompanySlug(slug) {
+  if (!slug) return '';
+  return slug
+    .split(/[-_]+/)
+    .filter(Boolean)
+    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
 function getCompany() {
   const selectors = [
     '.company-name',
     '[data-qa="company-name"]',
     '.main-header-text h2',
+    '.posting-headline h3',
+    '.posting-headline .company',
+    '[data-qa="company"]',
   ];
+
   for (const sel of selectors) {
     const el = document.querySelector(sel);
     if (el?.textContent?.trim()) return el.textContent.trim();
   }
-  // Fall back to subdomain or path segment
-  const match = location.hostname.match(/^([^.]+)\.greenhouse/);
-  if (match) return match[1];
+
+  const host = location.hostname.toLowerCase();
+
+  // Greenhouse hosted under job-boards.greenhouse.io/<company>/jobs/<id>
+  if (host === 'job-boards.greenhouse.io') {
+    const parts = location.pathname.split('/').filter(Boolean);
+    if (parts.length > 0) {
+      return prettifyCompanySlug(parts[0]);
+    }
+  }
+
+  // Older greenhouse subdomain style: <company>.greenhouse.io
+  const subdomainMatch = location.hostname.match(/^([^.]+)\.greenhouse\.io$/i);
+  if (subdomainMatch && subdomainMatch[1].toLowerCase() !== 'job-boards') {
+    return prettifyCompanySlug(subdomainMatch[1]);
+  }
+
+  // Lever style: jobs.lever.co/<company>/<job>
+  if (host === 'jobs.lever.co') {
+    const parts = location.pathname.split('/').filter(Boolean);
+    if (parts.length > 0) {
+      return prettifyCompanySlug(parts[0]);
+    }
+  }
+
   return '';
 }
 
@@ -143,29 +178,37 @@ function getLabel(el) {
   return el.placeholder || el.getAttribute('aria-label') || '';
 }
 
-function scrapeFields() {
-  const enterButtonsBefore = dumpEnterManualButtons();
-  if (enterButtonsBefore.length > 0) {
-    coverLog('scrape.enterManually.before', enterButtonsBefore);
-  }
-
+async function scrapeFields() {
   // Click "Enter manually" buttons to expose textareas before scraping
-  document.querySelectorAll('button, a').forEach(btn => {
-    if (btn.textContent?.trim() === 'Enter manually' && isVisible(btn)) {
-      btn.click();
-    }
-  });
+  const enterBtns = Array.from(document.querySelectorAll('button, a'))
+    .filter(btn => btn.textContent?.trim() === 'Enter manually' && isVisible(btn));
 
-  const textareasAfterClick = dumpVisibleTextareas();
-  if (textareasAfterClick.length > 0) {
-    coverLog('scrape.textareas.afterEnterManual', textareasAfterClick);
+  if (enterBtns.length > 0) {
+    for (const btn of enterBtns) {
+      try {
+        btn.click();
+      } catch {}
+    }
+
+    // Give React time to mount the textareas
+    const start = Date.now();
+    while (Date.now() - start < 2500) {
+      const resumeEl = document.querySelector('#resume_text');
+      const coverEl = document.querySelector('#cover_letter_text');
+      const anyVisibleTextarea = Array.from(document.querySelectorAll('textarea')).some(isVisible);
+
+      if ((resumeEl && isVisible(resumeEl)) || (coverEl && isVisible(coverEl)) || anyVisibleTextarea) {
+        break;
+      }
+
+      await new Promise(r => setTimeout(r, 80));
+    }
   }
 
   const results = [];
   const seen = new Set();
-  const noiseLabels = /^(enter manually|attach|upload|browse|choose file|accepted file types)/i;
+  const noiseLabels = /^(enter manually|attach|upload|browse|choose file|accepted file types)$/i;
 
-  // Standard inputs/selects/textareas
   const inputs = document.querySelectorAll(
     'input:not([type="hidden"]):not([type="submit"]):not([type="button"])' +
     ':not([type="checkbox"]):not([type="radio"]):not([type="search"]):not([type="file"]),' +
@@ -174,22 +217,51 @@ function scrapeFields() {
 
   for (const el of inputs) {
     if (!isVisible(el)) continue;
+
     const selector = getSelector(el);
     if (seen.has(selector)) continue;
     seen.add(selector);
 
-    const tag  = el.tagName.toLowerCase();
+    const tag = el.tagName.toLowerCase();
     const type = tag === 'select' ? 'select' : tag === 'textarea' ? 'textarea' : (el.type || 'text');
-    const label = getLabel(el);
+    let label = getLabel(el);
+
+    // Force known Greenhouse manual-entry fields to proper names
+    if (selector === '#cover_letter_text' || selector === '#cover_letter') {
+      label = 'Cover Letter';
+    }
+    if (selector === '#resume_text') {
+      label = 'Resume/CV';
+    }
 
     if (!label || noiseLabels.test(label)) {
-      // Rename known cover letter / resume selectors even if label is noise
       if (selector === '#cover_letter_text' || selector === '#cover_letter') {
-        results.push({ selector, label: 'Cover Letter', type: 'textarea', required: false, options: [], value: '' });
+        results.push({
+          selector,
+          label: 'Cover Letter',
+          type: 'textarea',
+          required: false,
+          options: [],
+          value: '',
+          isReactSelect: false,
+        });
         continue;
       }
-      if (selector === '#resume_text') continue; // skip resume text box
-      if (!label) continue;
+
+      if (selector === '#resume_text') {
+        results.push({
+          selector,
+          label: 'Resume/CV',
+          type: 'textarea',
+          required: false,
+          options: [],
+          value: '',
+          isReactSelect: false,
+        });
+        continue;
+      }
+
+      continue;
     }
 
     let options = [];
@@ -199,44 +271,54 @@ function scrapeFields() {
         .map(o => ({ value: o.value, label: o.text.trim() }));
     }
 
-    const required = el.required ||
+    const required =
+      el.required ||
       !!el.closest('[class*="required"], [aria-required="true"]') ||
-      !!el.closest('li, div.field')?.textContent.includes('*');
+      !!el.closest('li, div.field')?.textContent?.includes('*');
 
-    results.push({ selector, label, type, required, options, value: '', isReactSelect: false });
+    results.push({
+      selector,
+      label,
+      type,
+      required,
+      options,
+      value: '',
+      isReactSelect: false,
+    });
   }
 
-  // React custom selects (Greenhouse EEO widgets)
   document.querySelectorAll('[role="combobox"], [class*="select__control"]').forEach(ctrl => {
     if (!isVisible(ctrl)) return;
     const container = ctrl.closest('li, div.field, .application-question, [class*="field"], [class*="eeoc"]');
     if (!container) return;
+
     const lbl = container.querySelector('label');
     const label = lbl
       ? lbl.textContent.trim().replace(/\s*\*\s*$/, '').trim()
       : container.textContent.trim().split('\n')[0].trim().replace(/\s*\*\s*$/, '');
+
     if (!label || noiseLabels.test(label)) return;
+
     const selector = getSelector(ctrl);
     if (seen.has(selector)) return;
     seen.add(selector);
-    const required = !!container.querySelector('[class*="required"], .asterisk') ||
+
+    const required =
+      !!container.querySelector('[class*="required"], .asterisk') ||
       container.textContent.includes('*');
-    results.push({ selector, label, type: 'react-select', required, options: [], value: '', isReactSelect: true });
+
+    results.push({
+      selector,
+      label,
+      type: 'react-select',
+      required,
+      options: [],
+      value: '',
+      isReactSelect: true,
+    });
   });
 
-  const finalFields = results.filter(f => f.label.length < 300);
-  const coverLike = finalFields.filter(f =>
-    (f.label || '').toLowerCase().includes('cover') ||
-    (f.label || '').toLowerCase().includes('letter') ||
-    f.selector === '#cover_letter_text' ||
-    f.selector === '#cover_letter'
-  );
-  coverLog('scrape.summary', {
-    totalFields: finalFields.length,
-    coverLikeCount: coverLike.length,
-    coverLike,
-  });
-  return finalFields;
+  return results.filter(f => f.label.length < 300);
 }
 
 // Hydrate React select options by clicking each one
@@ -277,52 +359,37 @@ function fillTextEl(el, value) {
 // Wait for an element matching any of the selectors to become visible.
 // Polls all selectors in parallel every 80ms — first match wins.
 // Also watches for any newly-appeared textarea as a last resort.
-async function waitForAnyVisible(selectors, maxMs = 2500, before = null) {
+async function waitForAnyVisible(selectors, maxMs = 2500) {
   const start = Date.now();
-  const beforeSet = before || new Set();
-  let lastSnapshotLog = 0;
-
-  coverLog('wait.start', {
-    selectors,
-    maxMs,
-    beforeTextareaCount: beforeSet.size,
-  });
+  const before = new Set(Array.from(document.querySelectorAll('textarea')));
 
   while (Date.now() - start < maxMs) {
+    // Prefer explicit selectors, but only if they resolve to a non-file visible textarea/input
     for (const sel of selectors) {
       try {
         const el = document.querySelector(sel);
-        if (el && isVisible(el)) {
-          coverLog('wait.match.selector', { selector: sel, element: summarizeEl(el) });
-          return el;
-        }
-      } catch (err) {
-        coverLog('wait.selector.error', { selector: sel, message: String(err?.message || err) });
-      }
+        if (!el) continue;
+        if (!isVisible(el)) continue;
+
+        const tag = el.tagName?.toLowerCase();
+        const type = (el.getAttribute?.("type") || "").toLowerCase();
+
+        // Never allow file inputs here
+        if (tag === "input" && type === "file") continue;
+
+        // Cover/manual-entry should really be textarea-based
+        if (tag === "textarea") return el;
+      } catch {}
     }
 
-    for (const el of document.querySelectorAll('textarea')) {
-      if (!beforeSet.has(el) && isVisible(el)) {
-        coverLog('wait.match.newTextarea', summarizeEl(el));
-        return el;
-      }
+    // Fallback: any newly appeared visible textarea
+    for (const el of document.querySelectorAll("textarea")) {
+      if (!before.has(el) && isVisible(el)) return el;
     }
 
-    if (Date.now() - lastSnapshotLog > 500) {
-      lastSnapshotLog = Date.now();
-      coverLog('wait.poll', {
-        elapsedMs: Date.now() - start,
-        textareas: dumpVisibleTextareas(),
-      });
-    }
-
-    await new Promise(r => setTimeout(r, 80));
+    await new Promise((r) => setTimeout(r, 80));
   }
 
-  coverLog('wait.timeout', {
-    selectors,
-    textareas: dumpVisibleTextareas(),
-  });
   return null;
 }
 
@@ -353,8 +420,8 @@ async function injectFields(filledFields) {
   //   3. Fill it with React-safe native setter + dispatch events
   const coverField = filledFields.find(f =>
     f.value && (
-      f.label.toLowerCase().includes('cover') ||
-      f.label.toLowerCase().includes('letter') ||
+      (f.label || '').toLowerCase().includes('cover') ||
+      (f.label || '').toLowerCase().includes('letter') ||
       f.selector === '#cover_letter_text' ||
       f.selector === '#cover_letter'
     )
@@ -420,7 +487,6 @@ async function injectFields(filledFields) {
     const coverSelectors = [
       coverField.selector,
       '#cover_letter_text',
-      '#cover_letter',
       'textarea[name*="cover" i]',
       'textarea[placeholder*="cover" i]',
       'textarea[placeholder*="letter" i]',
@@ -431,16 +497,34 @@ async function injectFields(filledFields) {
 
     const coverEl = await waitForAnyVisible(coverSelectors, 5000, beforeTextareas);
     if (coverEl) {
-      coverLog('inject.coverEl.found', summarizeEl(coverEl));
-      coverEl.focus();
-      fillTextEl(coverEl, coverField.value);
-      coverEl.dispatchEvent(new Event('blur', { bubbles: true }));
-      filled++;
-      coverLog('inject.coverEl.filled', {
-        finalValueLength: coverEl.value?.length || 0,
-        matchesExpected: (coverEl.value || '') === coverField.value,
-        preview: (coverEl.value || '').slice(0, 120),
+      const tag = coverEl.tagName?.toLowerCase();
+      const type = (coverEl.getAttribute?.("type") || "").toLowerCase();
+
+      coverLog('inject.coverEl.found', {
+        ...summarizeEl(coverEl),
+        tag,
+        type,
       });
+
+      if (tag === 'input' && type === 'file') {
+        coverLog('inject.coverEl.rejectedFileInput', {
+          reason: 'resolved cover target was a file input, refusing to write text into it',
+          selectorTried: coverField.selector,
+          chosenEl: summarizeEl(coverEl),
+          coverSelectors,
+        });
+      } else {
+        coverEl.focus();
+        fillTextEl(coverEl, coverField.value);
+        coverEl.dispatchEvent(new Event('blur', { bubbles: true }));
+        filled++;
+
+        coverLog('inject.coverEl.filled', {
+          finalValueLength: coverEl.value?.length || 0,
+          matchesExpected: (coverEl.value || '') === coverField.value,
+          preview: (coverEl.value || '').slice(0, 120),
+        });
+      }
     } else {
       coverLog('inject.coverEl.notFound', {
         coverSelectors,
@@ -464,8 +548,8 @@ async function injectFields(filledFields) {
 
     // Skip cover letter — handled above
     const isCover =
-      field.label.toLowerCase().includes('cover') ||
-      field.label.toLowerCase().includes('letter') ||
+      (field.label || '').toLowerCase().includes('cover') ||
+      (field.label || '').toLowerCase().includes('letter') ||
       field.selector === '#cover_letter_text' ||
       field.selector === '#cover_letter';
     if (isCover) continue;
@@ -473,6 +557,10 @@ async function injectFields(filledFields) {
     try {
       const el = document.querySelector(field.selector);
       if (!el || !isVisible(el)) continue;
+      
+      const tag = el.tagName?.toLowerCase();
+      const type = (el.getAttribute?.("type") || "").toLowerCase();
+      if (tag === 'input' && type === 'file') continue;
 
       if (field.isReactSelect || field.type === 'react-select') {
         el.click();
@@ -608,9 +696,9 @@ if (document.readyState === 'loading') {
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === 'GET_PAGE_INFO') {
     sendResponse({
-      url:     location.href,
-      ats:     detectATS(),
-      title:   getJobTitle(),
+      url: location.href,
+      ats: detectATS(),
+      title: getJobTitle(),
       company: getCompany(),
     });
     return false;
@@ -618,39 +706,56 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
   if (msg.type === 'SCRAPE_FIELDS') {
     (async () => {
-      coverLog('message.SCRAPE_FIELDS.start', { url: location.href });
-      let fields = scrapeFields();
-      fields = await hydrateReactSelectOptions(fields);
-      coverLog('message.SCRAPE_FIELDS.done', {
-        totalFields: fields.length,
-        coverFields: fields.filter(f =>
-          (f.label || '').toLowerCase().includes('cover') ||
-          (f.label || '').toLowerCase().includes('letter') ||
-          f.selector === '#cover_letter_text' ||
-          f.selector === '#cover_letter'
-        ),
-      });
-      sendResponse({ fields });
+      try {
+        coverLog('message.SCRAPE_FIELDS.start', { url: location.href });
+        let fields = await scrapeFields();
+        fields = await hydrateReactSelectOptions(fields);
+        coverLog('message.SCRAPE_FIELDS.done', {
+          totalFields: fields.length,
+          coverFields: fields.filter(f =>
+            ((f.label || '').toLowerCase().includes('cover')) ||
+            ((f.label || '').toLowerCase().includes('letter')) ||
+            f.selector === '#cover_letter_text' ||
+            f.selector === '#cover_letter'
+          ),
+        });
+        sendResponse({ fields });
+      } catch (err) {
+        const message = String(err?.message || err);
+        coverLog('message.SCRAPE_FIELDS.error', { message, stack: err?.stack || '' });
+        sendResponse({ error: message, fields: [] });
+      }
     })();
-    return true; // async
+    return true;
   }
 
   if (msg.type === 'INJECT_FIELDS') {
     (async () => {
-      coverLog('message.INJECT_FIELDS.start', {
-        totalFields: msg.fields?.length || 0,
-        coverFields: (msg.fields || []).filter(f =>
-          (f.label || '').toLowerCase().includes('cover') ||
-          (f.label || '').toLowerCase().includes('letter') ||
-          f.selector === '#cover_letter_text' ||
-          f.selector === '#cover_letter'
-        ).map(f => ({ label: f.label, selector: f.selector, valueLength: f.value?.length || 0 })),
-      });
-      const count = await injectFields(msg.fields);
-      coverLog('message.INJECT_FIELDS.done', { filled: count });
-      sendResponse({ filled: count });
+      try {
+        coverLog('message.INJECT_FIELDS.start', {
+          totalFields: msg.fields?.length || 0,
+          coverFields: (msg.fields || []).filter(f =>
+            ((f.label || '').toLowerCase().includes('cover')) ||
+            ((f.label || '').toLowerCase().includes('letter')) ||
+            f.selector === '#cover_letter_text' ||
+            f.selector === '#cover_letter'
+          ).map(f => ({
+            label: f.label,
+            selector: f.selector,
+            valueLength: f.value?.length || 0,
+          })),
+        });
+
+        const count = await injectFields(msg.fields || []);
+        coverLog('message.INJECT_FIELDS.done', { filled: count });
+        sendResponse({ filled: count });
+      } catch (err) {
+        const message = String(err?.message || err);
+        coverLog('message.INJECT_FIELDS.error', { message, stack: err?.stack || '' });
+        sendResponse({ error: message, filled: 0 });
+      }
     })();
-    return true; // async
+    return true;
   }
 
   if (msg.type === 'SET_FLOAT_STATE') {

@@ -91,6 +91,9 @@ async function runAutoApply(tabId) {
   let fields;
   try {
     const res = await sendToTab(tabId, { type: 'SCRAPE_FIELDS' });
+    if (res?.error) {
+      throw new Error(res.error);
+    }
     fields = res.fields;
     await log('info', `Scraped ${fields.length} fields`);
     setFloat(tabId, 'working', `Filling ${fields.length} fields with Groq…`);
@@ -114,6 +117,9 @@ async function runAutoApply(tabId) {
   try {
     setFloat(tabId, 'working', 'Injecting into form…');
     const res = await sendToTab(tabId, { type: 'INJECT_FIELDS', fields });
+    if (res?.error) {
+      throw new Error(res.error);
+    }
     await log('info', `Injected ${res.filled} of ${fields.filter(f => f.type !== 'file').length} fields`);
     setFloat(tabId, 'done', `${res.filled} fields filled`);
   } catch (e) {
@@ -176,32 +182,53 @@ Rules:
 
   // Pass 2 — cover letter
   if (coverFields.length > 0) {
+    const resolvedCompany = (company || '').trim() || 'Company';
+
     const system = `You are writing a cover letter for a job application.
-Write ONLY the cover letter as plain text — no JSON, no markdown, nothing else.
-3 short paragraphs separated by a blank line. Under 300 words. No placeholders.
-Use the real company name: ${company}`;
+Write ONLY the cover letter as plain text. No JSON, no markdown, no explanation.
+3 short paragraphs separated by a blank line. Under 300 words.
+
+Rules:
+- The company name is exactly "${resolvedCompany}".
+- The role/company may appear in the resume or cover letter template with old names. Ignore those old names.
+- Do NOT mention Amazon unless the company is actually Amazon.
+- Use "${resolvedCompany}" naturally in the first paragraph.
+- No placeholders.`;
 
     try {
       const data = await enginePost('/api/llm', {
         system,
-        messages:   [{ role: 'user', content: `${buildProfileBlock(profile)}\n\nRESUME:\n${profile.resumeText || '(not provided)'}\n\nCOVER LETTER TEMPLATE:\n${profile.coverLetterText || '(not provided)'}` }],
+        messages: [{
+          role: 'user',
+          content:
+`COMPANY:
+${resolvedCompany}
+
+${buildProfileBlock(profile)}
+
+RESUME:
+${profile.resumeText || '(not provided)'}
+
+COVER LETTER TEMPLATE:
+${profile.coverLetterText || '(not provided)'}`,
+        }],
         max_tokens: 600,
       });
+
       const text = (data.text || '').trim();
 
       if (text) {
         coverFields.forEach(f => { answers[f.selector] = text; });
-        await log('info', `Cover letter generated: ${text.length} chars for ${company}`);
+        await log('info', `Cover letter generated: ${text.length} chars for ${resolvedCompany}`);
 
-        // Save — awaited so any error appears in the log immediately
         if (profile.saveCoverLetterEnabled !== false) {
           try {
             const saved = await enginePost('/api/cover-letter/save', {
-              firstName:   profile.firstName   || '',
-              lastName:    profile.lastName    || '',
-              companyName: company,
-              content:     text,
-              saveDir:     profile.coverLetterSaveDir || '',
+              firstName: profile.firstName || '',
+              lastName: profile.lastName || '',
+              companyName: resolvedCompany,
+              content: text,
+              saveDir: profile.coverLetterSaveDir || '',
             });
             await log('info', `Cover letter saved → ${saved.path}`);
           } catch (saveErr) {

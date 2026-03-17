@@ -1,7 +1,7 @@
 // src/useApplyQueue.ts — queue state + all draft actions as a single custom hook
 
 import { useState } from "react";
-import { scrapeForm, fillForm } from "./api";
+import { scrapeForm, fillForm, saveCoverLetter as saveCoverLetterApi } from "./api";
 import {
   loadQueue, saveQueue, loadProfile,
   detectATS, profileToFields,
@@ -96,7 +96,7 @@ export function useApplyQueue(profile: ApplicantProfile) {
         length: jobDesc.length,
       });
 
-      const filled = await fillScrapedFieldsWithGroq(scraped, profile, jobDesc);
+      const filled = await fillScrapedFieldsWithGroq(scraped, profile, jobDesc, draft.company);
       queueLog("scrapeDraft.filled", {
         jobId,
         fieldCount: filled.length,
@@ -137,7 +137,7 @@ export function useApplyQueue(profile: ApplicantProfile) {
       if (draft.scrapedFields.length > 0) {
         const jobDesc = await fetchJobDescription(jobId);
         queueLog("fillDraft.jobDescription", { jobId, length: jobDesc.length });
-        const filled  = await fillScrapedFieldsWithGroq(draft.scrapedFields, profile, jobDesc);
+        const filled  = await fillScrapedFieldsWithGroq(draft.scrapedFields, profile, jobDesc, draft.company);
         queueLog("fillDraft.scrapedRefill.done", {
           jobId,
           fieldCount: filled.length,
@@ -269,6 +269,43 @@ export function useApplyQueue(profile: ApplicantProfile) {
     });
   }
 
+    async function saveCoverLetter(jobId: number) {
+    const draft = queue.find((d) => d.jobId === jobId);
+    if (!draft) {
+      throw new Error(`Draft not found for jobId ${jobId}`);
+    }
+
+    const text = (draft.generatedCoverLetter || "").trim();
+    if (!text) {
+      throw new Error("No generated cover letter is available for this draft.");
+    }
+
+    const firstName = (profile.firstName || "").trim();
+    const lastName = (profile.lastName || "").trim();
+    const companyName = (draft.company || "Company").trim();
+    const saveDir = (profile.coverLetterSaveDir || "").trim() || undefined;
+
+    queueLog("saveCoverLetter.start", {
+      jobId,
+      companyName,
+      textLength: text.length,
+      saveDir: saveDir || "(default)",
+    });
+
+    const result = await saveCoverLetterApi(
+      firstName,
+      lastName,
+      companyName,
+      text,
+      saveDir,
+    );
+
+    queueLog("saveCoverLetter.success", {
+      jobId,
+      path: result.path,
+    });
+  }
+
   return {
     queue,
     scrapeDraft,
@@ -277,6 +314,7 @@ export function useApplyQueue(profile: ApplicantProfile) {
     removeDraft,
     updateField,
     updateScrapedField,
+    saveCoverLetter,
   };
 }
 
