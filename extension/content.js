@@ -190,23 +190,100 @@ async function hydrateReactSelectOptions(fields) {
 
 // ─── Field injection ──────────────────────────────────────────────────────────
 
+// Fill a single textarea or input using React-safe native setter
+function fillTextEl(el, value) {
+  const proto = el.tagName === 'TEXTAREA'
+    ? window.HTMLTextAreaElement.prototype
+    : window.HTMLInputElement.prototype;
+  const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+  if (setter) setter.call(el, value);
+  else el.value = value;
+  el.dispatchEvent(new Event('input',  { bubbles: true }));
+  el.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+// Wait for an element to become visible, polling up to maxMs
+async function waitForVisible(selector, maxMs = 2000) {
+  const start = Date.now();
+  while (Date.now() - start < maxMs) {
+    const el = document.querySelector(selector);
+    if (el && isVisible(el)) return el;
+    await new Promise(r => setTimeout(r, 80));
+  }
+  return null;
+}
+
 async function injectFields(filledFields) {
   let filled = 0;
 
-  // Cover letter — click Enter manually first
+  // ── Cover letter: dedicated robust handler ──────────────────────────────────
+  // Greenhouse hides the textarea behind "Enter manually". We must:
+  //   1. Find and click the correct "Enter manually" button (the one for cover letter,
+  //      not the resume one — there may be two on the page)
+  //   2. Wait for the textarea to actually appear in the DOM and become visible
+  //   3. Fill it with React-safe native setter + dispatch events
   const coverField = filledFields.find(f =>
-    f.value && (f.label.toLowerCase().includes('cover') ||
-    f.selector === '#cover_letter_text' || f.selector === '#cover_letter')
+    f.value && (
+      f.label.toLowerCase().includes('cover') ||
+      f.label.toLowerCase().includes('letter') ||
+      f.selector === '#cover_letter_text' ||
+      f.selector === '#cover_letter'
+    )
   );
+
   if (coverField?.value) {
-    document.querySelectorAll('button, a').forEach(btn => {
-      if (btn.textContent?.trim() === 'Enter manually' && isVisible(btn)) btn.click();
-    });
-    await new Promise(r => setTimeout(r, 400));
+    // Find the cover letter section container — look for the heading text
+    const allBtns = Array.from(document.querySelectorAll('button, a'));
+    const enterBtns = allBtns.filter(b => b.textContent?.trim() === 'Enter manually' && isVisible(b));
+
+    // Click the Enter manually button that's closest to a "Cover Letter" label
+    // If there are two (resume + cover letter), pick the right one
+    let clicked = false;
+    for (const btn of enterBtns) {
+      const container = btn.closest('section, .field, li, div');
+      const containerText = container?.textContent?.toLowerCase() || '';
+      if (containerText.includes('cover') || containerText.includes('letter') || enterBtns.length === 1) {
+        btn.click();
+        clicked = true;
+        break;
+      }
+    }
+    // If we couldn't identify which button, click all of them
+    if (!clicked) enterBtns.forEach(b => b.click());
+
+    // Wait for the textarea to appear — poll instead of fixed delay
+    const coverSelectors = [
+      coverField.selector,
+      '#cover_letter_text',
+      '#cover_letter',
+      'textarea[name*="cover" i]',
+      'textarea[placeholder*="cover" i]',
+    ];
+
+    let coverEl = null;
+    for (const sel of coverSelectors) {
+      coverEl = await waitForVisible(sel, 1500);
+      if (coverEl) break;
+    }
+
+    if (coverEl) {
+      fillTextEl(coverEl, coverField.value);
+      filled++;
+    }
   }
 
+  // ── All other fields ────────────────────────────────────────────────────────
   for (const field of filledFields) {
     if (!field.value) continue;
+
+    // Skip cover letter — handled above
+    const isCover =
+      field.label.toLowerCase().includes('cover') ||
+      field.label.toLowerCase().includes('letter') ||
+      field.selector === '#cover_letter_text' ||
+      field.selector === '#cover_letter';
+    if (isCover) continue;
+
     try {
       const el = document.querySelector(field.selector);
       if (!el || !isVisible(el)) continue;
@@ -225,34 +302,25 @@ async function injectFields(filledFields) {
           }
         }
         if (!matched) document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
       } else if (field.type === 'select') {
-        const select = el;
-        const opt = Array.from(select.options).find(
+        const opt = Array.from(el.options).find(
           o => o.text.toLowerCase() === field.value.toLowerCase() ||
                o.value.toLowerCase() === field.value.toLowerCase()
         );
         if (opt) {
-          select.value = opt.value;
-          select.dispatchEvent(new Event('change', { bubbles: true }));
+          el.value = opt.value;
+          el.dispatchEvent(new Event('change', { bubbles: true }));
           filled++;
         }
+
       } else {
-        // text / textarea / email / tel
-        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
-          el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype,
-          'value'
-        )?.set;
-        if (nativeInputValueSetter) {
-          nativeInputValueSetter.call(el, field.value);
-        } else {
-          el.value = field.value;
-        }
-        el.dispatchEvent(new Event('input',  { bubbles: true }));
-        el.dispatchEvent(new Event('change', { bubbles: true }));
+        fillTextEl(el, field.value);
         filled++;
       }
     } catch {}
   }
+
   return filled;
 }
 
@@ -271,8 +339,8 @@ function injectFloatingButton() {
   btn.title = 'Auto Apply with JobHunt';
   Object.assign(btn.style, {
     position:     'fixed',
-    bottom:       '24px',
-    right:        '24px',
+    top:          '16px',
+    right:        '16px',
     zIndex:       '2147483647',
     padding:      '10px 20px',
     background:   '#0a84ff',

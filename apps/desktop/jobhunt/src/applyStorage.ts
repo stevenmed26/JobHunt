@@ -35,6 +35,7 @@ export function emptyProfile(): ApplicantProfile {
     coverLetterText: "",
     resumeFileName: "",
     coverLetterFileName: "",
+    coverLetterSaveDir: "",
   };
 }
 

@@ -1,6 +1,6 @@
 // src/applyLLM.ts — Groq fill logic for both profile fields and scraped form fields
 
-import { callLLM, getJobDescription, ScrapedField } from "./api";
+import { callLLM, getJobDescription, saveCoverLetter, ScrapedField } from "./api";
 import type { ApplicantProfile, ApplicationDraft, ApplicationField } from "./types";
 
 export async function fetchJobDescription(jobId: number): Promise<string> {
@@ -195,11 +195,26 @@ ${jobDescription || "(not available)"}`;
 
       const trimmed = coverText.trim();
       if (trimmed) {
-        // Build the answer array ourselves — one entry per cover letter field
         coverAnswers = coverFields.map((f) => ({
           selector: f.selector,
           value:    trimmed,
         }));
+
+        // Save to file as fallback — useful when form injection fails
+        // Company name is extracted from the job description (first line heuristic)
+        const companyGuess = jobDescription
+          ? jobDescription.split(/[.]/)[0].replace(/^(about|at|join|work at)\s+/i, "").trim().slice(0, 40) : "Company";
+        saveCoverLetter(
+          profile.firstName,
+          profile.lastName,
+          companyGuess,
+          trimmed,
+          profile.coverLetterSaveDir || undefined,
+        ).then(({ path }) => {
+          console.log(`[AutoApply] Cover letter saved → ${path}`);
+        }).catch((e) => {
+          console.warn("[AutoApply] Cover letter save failed:", e);
+        });
       }
     } catch (e) {
       console.warn("[AutoApply] Cover letter call failed:", e);

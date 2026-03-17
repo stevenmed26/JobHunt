@@ -89,6 +89,12 @@ func NewMux(d Deps) *http.ServeMux {
 		http.MethodPost: llmh.ServeProxy,
 	}))
 
+	// Cover letter save
+	clh := CoverLetterHandler{}
+	mux.HandleFunc("/api/cover-letter/save", methodMux(map[string]http.HandlerFunc{
+		http.MethodPost: clh.Save,
+	}))
+
 	// Applicant profile — shared between Tauri app and browser extension
 	ph := ProfileHandler{DataDir: d.DataDir}
 	mux.HandleFunc("/api/profile", methodMux(map[string]http.HandlerFunc{

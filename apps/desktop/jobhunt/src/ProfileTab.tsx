@@ -287,6 +287,33 @@ export function ProfileTab({
           minHeight={140}
         />
 
+        {/* Cover letter save directory */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <span style={{ fontSize: 13, fontWeight: 600 }}>Cover letter save folder</span>
+          <span className="help">
+            Where Groq-generated cover letters are saved as .txt files.
+            Defaults to Documents/JobHunt/CoverLetters if left blank.
+          </span>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <input
+              className="input"
+              style={{ flex: 1, fontFamily: "monospace", fontSize: 12 }}
+              value={profile.coverLetterSaveDir}
+              placeholder="e.g. C:\Users\You\Documents\CoverLetters"
+              onChange={(e) => updateProfile("coverLetterSaveDir", e.target.value)}
+            />
+            {profile.coverLetterSaveDir && (
+              <button
+                className="btn miniBtn"
+                style={{ opacity: 0.5, flexShrink: 0 }}
+                onClick={() => updateProfile("coverLetterSaveDir", "")}
+              >
+                Clear
+              </button>
+            )}
+          </div>
+        </div>
+
         <DocumentField
           label="Default cover letter"
           fileName={profile.coverLetterFileName}

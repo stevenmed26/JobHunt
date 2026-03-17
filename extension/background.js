@@ -146,7 +146,19 @@ Write ONLY the cover letter as plain text — no JSON, no markdown, nothing else
         max_tokens: 600,
       });
       const text = (data.text || '').trim();
-      if (text) coverFields.forEach(f => { answers[f.selector] = text; });
+      if (text) {
+        coverFields.forEach(f => { answers[f.selector] = text; });
+        // Save to file — fire and forget, works even if form injection fails
+        const companyGuess = (profile.company || '').trim().slice(0, 40) || 'Company';
+        enginePost('/api/cover-letter/save', {
+          firstName:   profile.firstName || '',
+          lastName:    profile.lastName  || '',
+          companyName: companyGuess,
+          content:     text,
+          saveDir:     profile.coverLetterSaveDir || '',
+        }).then(r => console.log('[JobHunt BG] Cover letter saved →', r.path))
+          .catch(e => console.warn('[JobHunt BG] Cover letter save failed:', e));
+      }
     } catch (e) {
       console.warn('[JobHunt BG] Cover letter failed:', e);
     }

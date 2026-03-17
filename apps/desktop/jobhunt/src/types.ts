@@ -56,6 +56,7 @@ export interface ApplicantProfile {
   coverLetterText: string;
   resumeFileName: string;
   coverLetterFileName: string;
+  coverLetterSaveDir: string; // directory where generated cover letters are saved
 }
 
 export interface ApplicationDraft {

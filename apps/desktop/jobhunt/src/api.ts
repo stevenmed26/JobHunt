@@ -277,3 +277,21 @@ export async function extractCompaniesFromText(text: string): Promise<CompanyRes
   const data = await res.json();
   return data.results as CompanyResult[];
 }
+
+// ─── Cover letter save ────────────────────────────────────────────────────────
+
+export async function saveCoverLetter(
+  firstName: string,
+  lastName: string,
+  companyName: string,
+  text: string,
+  saveDir?: string,
+): Promise<{ ok: boolean; path: string }> {
+  const res = await fetch(`${ENGINE_BASE}/api/cover-letter/save`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ firstName, lastName, companyName, content: text, saveDir }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
