@@ -117,7 +117,17 @@ export function ProfileTab({
           <Field label="Email *" fieldKey="email" type="email" placeholder="jane@example.com" profile={profile} onChange={updateProfile} />
           <Field label="Phone *" fieldKey="phone" placeholder="+1 (555) 000-0000" profile={profile} onChange={updateProfile} />
         </TwoCol>
-        <Field label="City, State *" fieldKey="location" placeholder="Dallas, TX" profile={profile} onChange={updateProfile} />
+        <p className="help" style={{ margin: "4px 0 0" }}>
+          Fill city, state, and country separately — Groq uses these to answer location dropdowns precisely.
+        </p>
+        <TwoCol>
+          <Field label="City *" fieldKey="city" placeholder="Dallas" profile={profile} onChange={updateProfile} />
+          <Field label="State *" fieldKey="state" placeholder="TX" profile={profile} onChange={updateProfile} />
+        </TwoCol>
+        <TwoCol>
+          <Field label="Country *" fieldKey="country" placeholder="United States" profile={profile} onChange={updateProfile} />
+          <Field label="Display location (City, State)" fieldKey="location" placeholder="Dallas, TX" profile={profile} onChange={updateProfile} />
+        </TwoCol>
         <TwoCol>
           <Field label="LinkedIn URL"       fieldKey="linkedinURL"  placeholder="https://linkedin.com/in/jane" profile={profile} onChange={updateProfile} />
           <Field label="Portfolio / website" fieldKey="portfolioURL" placeholder="https://jane.dev" profile={profile} onChange={updateProfile} />
@@ -158,7 +168,54 @@ export function ProfileTab({
             </div>
           </div>
         </TwoCol>
-        <Field label="Desired salary" fieldKey="desiredSalary" placeholder="e.g. $130,000 or Open to discussion" profile={profile} onChange={updateProfile} />
+        <TwoCol>
+          <Field label="Desired salary" fieldKey="desiredSalary" placeholder="e.g. $130,000 or Open to discussion" profile={profile} onChange={updateProfile} />
+          <Field label="Notice period / availability" fieldKey="noticePeriod" placeholder="e.g. 2 weeks, Immediately" profile={profile} onChange={updateProfile} />
+        </TwoCol>
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <span style={{ fontSize: 12, color: "rgba(255,255,255,0.55)" }}>Authorized to work in your current country?</span>
+          <div className="checkRow" style={{ padding: "8px 0" }}>
+            <input
+              className="checkbox"
+              type="checkbox"
+              checked={profile.authorizedToWork}
+              onChange={(e) => updateProfile("authorizedToWork", e.target.checked)}
+            />
+            <span style={{ fontSize: 13 }}>Yes, authorized to work here</span>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Common custom questions ── */}
+      <div className="sectionHead">Common Questions</div>
+      <div style={{ padding: "14px", display: "flex", flexDirection: "column", gap: 12 }}>
+        <p className="help" style={{ marginTop: 0 }}>
+          These appear on most applications. Filling them here means Groq can answer them automatically.
+        </p>
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <span style={{ fontSize: 12, color: "rgba(255,255,255,0.55)" }}>Previously worked at or consulted for this company?</span>
+          <div className="checkRow" style={{ padding: "8px 0" }}>
+            <input
+              className="checkbox"
+              type="checkbox"
+              checked={profile.previouslyEmployed}
+              onChange={(e) => updateProfile("previouslyEmployed", e.target.checked)}
+            />
+            <span style={{ fontSize: 13 }}>Yes (Groq will answer "Yes" to these questions)</span>
+          </div>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <span style={{ fontSize: 12, color: "rgba(255,255,255,0.55)" }}>
+            Employment agreements or post-employment restrictions?
+          </span>
+          <span className="help">Leave blank if none. If yes, describe briefly — Groq will use this to answer the question.</span>
+          <input
+            className="input"
+            value={profile.employmentRestrictions}
+            placeholder="e.g. Non-compete with Acme Corp expires June 2025"
+            onChange={(e) => updateProfile("employmentRestrictions", e.target.value)}
+          />
+        </div>
       </div>
 
       {/* ── EEO ── */}

@@ -77,6 +77,13 @@ Work authorization: ${profile.workAuth}`.trim();
 }
 
 // ─── Fill scraped form fields ─────────────────────────────────────────────────
+//
+// Uses two separate Groq calls to avoid token limit truncation:
+//   Pass 1 — all short fields (text, select, yes/no) — fast, compact JSON
+//   Pass 2 — cover letter only — full tokens for a long-form answer
+//
+// This ensures a truncated cover letter never cuts off the JSON array and
+// silently drops every field that comes after it.
 
 export async function fillScrapedFieldsWithGroq(
   fields: ScrapedField[],
@@ -85,87 +92,177 @@ export async function fillScrapedFieldsWithGroq(
 ): Promise<ScrapedField[]> {
   if (fields.length === 0) return fields;
 
-  const systemPrompt = `You are filling out a job application form.
-Return ONLY a JSON array — no markdown, no explanation:
-[{ "selector": "<selector>", "value": "<answer>" }, ...]
+  // Detect cover letter fields by label OR by being a textarea with selector
+  // matching known cover letter IDs — catches cases where the label is "Enter manually"
+  // (the Greenhouse button text) instead of "Cover Letter".
+  const isCoverLetter = (f: ScrapedField) =>
+    f.label.toLowerCase().includes("cover") ||
+    f.label.toLowerCase().includes("letter") ||
+    f.selector === "#cover_letter_text" ||
+    f.selector === "#cover_letter";
 
-Rules:
-- For select fields, value MUST exactly match one of the provided options (use the option label).
-- For file fields, leave value as empty string "".
-- For fields labelled "Cover Letter" or similar: you MUST write a tailored 3-paragraph cover letter using the resume and job description. Never leave this empty.
-- For EEO fields (gender, race, veteran, disability), map the applicant's profile values to the available options.
-- For yes/no sponsorship questions, answer based on the work authorization in the profile.
-- For unknown custom questions not answerable from the profile, write a brief professional answer.
-- Keep all non-cover-letter answers concise (1 sentence or less).`;
+  const shortFields  = fields.filter((f) => f.type !== "file" && !isCoverLetter(f));
+  const coverFields  = fields.filter((f) => f.type !== "file" && isCoverLetter(f));
 
-  const fieldSummary = fields
-    .filter((f) => f.type !== "file")
-    .map((f) => ({
+  // Build a compact profile string reused in both passes
+  const profileBlock = buildProfileBlock(profile);
+
+  // ── Pass 1: short fields ──────────────────────────────────────────────────
+  let shortAnswers: { selector: string; value: string }[] = [];
+
+  if (shortFields.length > 0) {
+    const fieldSummary = shortFields.map((f) => ({
       selector: f.selector,
       label:    f.label,
       type:     f.type,
       required: f.required,
-      options:  f.options.map((o) => o.label),
+      // Limit options to 30 entries — country lists have 190+ and bloat the prompt.
+      // Groq is told to use the closest match, fuzzy matching handles the rest.
+      options:  f.options.slice(0, 30).map((o) => o.label),
+      optionsTruncated: f.options.length > 30 ? `(${f.options.length - 30} more not shown — pick closest match)` : undefined,
     }));
 
-  const userMessage = `APPLICANT PROFILE:
-Name: ${profile.firstName} ${profile.lastName}
-Email: ${profile.email}
-Phone: ${profile.phone}
-Location: ${profile.location}
-Current title: ${profile.currentTitle}
-Years experience: ${profile.yearsExperience}
-Work authorization: ${profile.workAuth}
-Requires sponsorship: ${profile.requiresSponsorship ? "yes" : "no"}
-Desired salary: ${profile.desiredSalary}
-LinkedIn: ${profile.linkedinURL}
-GitHub: ${profile.githubURL}
-Gender: ${profile.gender}
-Race: ${profile.race}
-Veteran status: ${profile.veteranStatus}
-Disability status: ${profile.disabilityStatus}
+    const systemPrompt = `You are filling out a job application form.
+Return ONLY a JSON array — no markdown, no explanation, no trailing text:
+[{ "selector": "<selector>", "value": "<answer>" }, ...]
+
+Rules:
+- For select/react-select fields, value MUST exactly match one of the provided options.
+  If the full options list was truncated, write the closest natural match (e.g. "United States" for country).
+- For yes/no/boolean questions, match the closest option label exactly.
+- For EEO fields (gender, race, veteran, disability): map profile values to available options.
+  gender mappings: male→"Male", female→"Female", non_binary→"Non-binary" or closest, prefer_not→"I prefer not to say" or closest.
+  race mappings: white→"White", black→"Black or African American", hispanic→"Hispanic or Latino", asian→"Asian", prefer_not→"Decline to self identify" or closest.
+  veteran mappings: yes→"Protected Veteran" or closest, no→"I am not a protected veteran" or closest, prefer_not→"I prefer not to say" or closest.
+  disability mappings: yes→"Yes, I have a disability", no→"No, I don't have a disability", prefer_not→"I Don't Wish to Answer" or closest.
+- For sponsorship questions, answer based on work authorization: us_citizen/green_card → No, h1b/other → Yes.
+- For country-of-residence/location questions, use the applicant's country (United States if US-based).
+- For unknown custom questions, write a brief professional answer based on the resume.
+- Keep all answers concise (one sentence max). Do NOT write explanations or markdown.`;
+
+    const userMessage = `${profileBlock}
+
+JOB DESCRIPTION:
+${(jobDescription || "(not available)").slice(0, 800)}
+
+FORM FIELDS:
+${JSON.stringify(fieldSummary, null, 2)}`;
+
+    const text = await callLLM({
+      system:     systemPrompt,
+      messages:   [{ role: "user", content: userMessage }],
+      max_tokens: 1500,
+    });
+
+    try {
+      shortAnswers = JSON.parse(text.replace(/```json|```/g, "").trim());
+    } catch {
+      console.warn("[AutoApply] Pass 1 parse failed — short fields will be empty");
+    }
+  }
+
+  // ── Pass 2: cover letter — plain string call, JSON built here ───────────────
+  // Groq returns the cover letter as plain text only (no JSON).
+  // We wrap it into the answer array ourselves — zero parse risk.
+  let coverAnswers: { selector: string; value: string }[] = [];
+
+  if (coverFields.length > 0) {
+    const systemPrompt = `You are writing a cover letter for a job application.
+Write ONLY the cover letter text — plain text, no JSON, no markdown, no explanation, nothing else.
+3 short paragraphs separated by a blank line:
+- Paragraph 1: Genuine interest in the specific role and company (2 sentences, use real company name).
+- Paragraph 2: 2-3 relevant experiences from the resume that match the job requirements.
+- Paragraph 3: Enthusiasm, cultural fit, and a brief call to action (1-2 sentences).
+Keep it under 300 words. No placeholders like [Company Name].`;
+
+    const userMessage = `${profileBlock}
 
 RESUME:
 ${profile.resumeText || "(not provided)"}
 
-COVER LETTER TEMPLATE:
+COVER LETTER TEMPLATE (style guide only, do not copy verbatim):
 ${profile.coverLetterText || "(not provided)"}
 
 JOB DESCRIPTION:
-${jobDescription || "(not available)"}
+${jobDescription || "(not available)"}`;
 
-FORM FIELDS TO FILL:
-${JSON.stringify(fieldSummary, null, 2)}`;
+    try {
+      const coverText = await callLLM({
+        system:   systemPrompt,
+        messages: [{ role: "user", content: userMessage }],
+        max_tokens: 600,
+      });
 
-  const text = await callLLM({
-    system:     systemPrompt,
-    messages:   [{ role: "user", content: userMessage }],
-    max_tokens: 2000,
-  });
-
-  let answers: { selector: string; value: string }[] = [];
-  try {
-    answers = JSON.parse(text.replace(/```json|```/g, "").trim());
-  } catch {
-    console.warn("[AutoApply] Failed to parse Groq response for scraped fields");
-    return fields;
+      const trimmed = coverText.trim();
+      if (trimmed) {
+        // Build the answer array ourselves — one entry per cover letter field
+        coverAnswers = coverFields.map((f) => ({
+          selector: f.selector,
+          value:    trimmed,
+        }));
+      }
+    } catch (e) {
+      console.warn("[AutoApply] Cover letter call failed:", e);
+    }
   }
 
+  const allAnswers = [...shortAnswers, ...coverAnswers];
+
+  // ── Merge answers back into fields ────────────────────────────────────────
   return fields.map((f) => {
     if (f.type === "file") return f;
-    const answer = answers.find((a) => a.selector === f.selector);
+    const answer = allAnswers.find((a) => a.selector === f.selector);
     if (!answer?.value) return f;
 
-    // For selects, snap to a valid option label
     if ((f.type === "select" || f.isReactSelect) && f.options.length > 0) {
-      const match = f.options.find(
+      // Exact match first
+      const exact = f.options.find(
         (o) =>
           o.label.toLowerCase() === answer.value.toLowerCase() ||
           o.value.toLowerCase() === answer.value.toLowerCase(),
       );
-      return { ...f, value: match ? match.label : answer.value };
+      if (exact) return { ...f, value: exact.label };
+
+      // Fuzzy: option label contains the answer or vice versa
+      const fuzzy = f.options.find(
+        (o) =>
+          o.label.toLowerCase().includes(answer.value.toLowerCase().slice(0, 6)) ||
+          answer.value.toLowerCase().includes(o.label.toLowerCase().slice(0, 6)),
+      );
+      if (fuzzy) return { ...f, value: fuzzy.label };
+
+      // Fall through with raw answer — user can correct in review
+      return { ...f, value: answer.value };
     }
 
     return { ...f, value: answer.value };
   });
+}
+
+// ── Shared profile block ──────────────────────────────────────────────────────
+
+function buildProfileBlock(profile: ApplicantProfile): string {
+  return `APPLICANT PROFILE:
+Name: ${profile.firstName} ${profile.lastName}
+Email: ${profile.email}
+Phone: ${profile.phone}
+Location: ${profile.location}
+Country: ${profile.country}
+City: ${profile.city}
+State: ${profile.state}
+Current title: ${profile.currentTitle}
+Years experience: ${profile.yearsExperience}
+Work authorization (US): ${profile.workAuth}
+Requires sponsorship: ${profile.requiresSponsorship ? "yes" : "no"}
+Authorized to work in current country: ${profile.authorizedToWork ? "yes" : "no"}
+Desired salary: ${profile.desiredSalary}
+Notice period / availability: ${profile.noticePeriod}
+LinkedIn: ${profile.linkedinURL}
+GitHub: ${profile.githubURL}
+Gender (EEO): ${profile.gender}
+Race/ethnicity (EEO): ${profile.race}
+Veteran status (EEO): ${profile.veteranStatus}
+Disability status (EEO): ${profile.disabilityStatus}
+Previously employed here: ${profile.previouslyEmployed ? "yes" : "no"}
+Employment agreements/restrictions: ${profile.employmentRestrictions || "none"}`;
 }
